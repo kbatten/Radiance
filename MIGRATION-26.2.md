@@ -212,11 +212,24 @@ importer actually needs it) instead of eagerly capturing it in
   / `ReloadableTextureMixins` / `SpriteContentsMixins` injected at `NativeImage.upload`
   to stamp a `targetID` — **obsolete**; replace with lazy `radiance$getGlIDUnsafe()`
   at the consumption sites, or a new inject at the `GpuDevice.writeToTexture` path.
-- `TextureTracker.textureID2GLID` (Identifier→glId) should become Identifier→texture
-  (or be resolved on demand), and `TextureTracker.Texture` must drop the removed
-  `NativeImage.InternalFormat` (use `NativeImage.Format` / the `GpuTexture` format).
-- The `setFilter`/`setClamp` Vulkan redirects must move to the `GpuSampler` API
-  (`AbstractTexture#sampler`, `RenderSystem.getSamplerCache()`).
+- `TextureTracker.textureID2GLID` (Identifier→glId) **done** → `id2Texture`
+  (Identifier→`AbstractTexture`); `TextureTracker.Texture` **done** → built from
+  `GpuFormat`. Metadata capture **done**: `TextureUtilMixins` now hooks
+  `GpuDevice.createTexture` RETURN (was `TextureUtil.prepareImage`).
+- **Still to do (deeper):**
+  - `vulkan_render_integration/TextureUtilMixins` — *replaces* MC's GL texture
+    allocation with Vulkan (`generateTextureId()`/`prepareImage` redirects, both
+    removed). This must move to `GpuDevice`-backend level (intercept/replace
+    `createTexture` to return Vulkan-backed `GpuTexture`s, or supply a Vulkan
+    `GpuDeviceBackend`). `TextureProxy.prepareImage(InternalFormat,…)` → `GpuFormat`.
+  - Upload-interception mixins (`NativeImageBackedTexture`, `ReloadableTexture`,
+    `SpriteContents`, `SpriteAtlasTexture`) hooked `NativeImage.upload` (removed) to
+    stamp `targetID` — replace with lazy resolution or a `CommandEncoder.writeToTexture`
+    hook.
+  - `AuxiliaryTextures` allocated its PBR textures via `TextureUtil.prepareImage` →
+    `GpuDevice.createTexture`.
+  - The `setFilter`/`setClamp` Vulkan redirects must move to the `GpuSampler` API
+    (`AbstractTexture#sampler`, `RenderSystem.getSamplerCache()`).
 
 The auxiliary PBR data (specular/normal/flag `NativeImage`s stashed via
 `INativeImageExt`) is largely independent of the GL path and can be retained.
@@ -243,6 +256,10 @@ only as the classes they reference are confirmed to survive.
 - `mixins/vanilla_resource_tracker/NamespaceResourceManagerMixins` (→`FallbackResourceManager`; `ResourcePack`→`PackResources`, `InputSupplier`→`IoSupplier`)
 - `mixins/vulkan_options/GameOptionsScreenMixins` (→`OptionsSubScreen`; shadow `body`→`list`:`OptionsList`, `gameOptions`→`options`:`Options`)
 - `mixins/vulkan_render_integration/AbstractTextureMixins` + `mixins/vanilla_resource_tracker/AbstractTextureMixins` — re-architected to the `GpuTexture`/`GlTexture.glId()` model (foundation of the texture-tracking subsystem; see below)
+- `client/constant/VulkanConstants` — `VkFormat#getNativeImageInternalFormat()` (removed `InternalFormat`) → `getGpuFormat()` (`com.mojang.blaze3d.GpuFormat`)
+- `client/texture/TextureTracker` — `Texture` built from `GpuFormat`; `textureID2GLID` (dead) → lazy `id2Texture` (`Identifier`→`AbstractTexture`)
+- `mixins/vanilla_resource_tracker/TextureManagerMixins` — `registerTexture`→`register`; records the texture for lazy GL-id resolution
+- `mixins/vanilla_resource_tracker/TextureUtilMixins` — retargeted `TextureUtil.prepareImage(InternalFormat,…)` (removed) → `GpuDevice.createTexture(…, GpuFormat, …)` RETURN, capturing the `GlTexture` id + metadata into `GLID2Texture`
 
 ### Deferred leaf files (need API-shape changes, not just renames)
 

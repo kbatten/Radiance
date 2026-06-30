@@ -4,7 +4,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.stream.Collectors;
-import net.minecraft.client.texture.NativeImage;
+import com.mojang.blaze3d.GpuFormat;
+import com.mojang.blaze3d.platform.NativeImage;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 import org.lwjgl.opengl.GL33;
@@ -53,12 +54,14 @@ public class VulkanConstants {
             return name;
         }
 
-        public NativeImage.InternalFormat getNativeImageInternalFormat() {
+        // 26.2: NativeImage.InternalFormat (the GL internal format) was removed.
+        // Texture allocation now uses com.mojang.blaze3d.GpuFormat via GpuDevice.
+        public GpuFormat getGpuFormat() {
             return switch (this) {
-                case VK_FORMAT_R8_UNORM -> NativeImage.InternalFormat.RED;
-                case VK_FORMAT_R8G8_UNORM -> NativeImage.InternalFormat.RG;
-                case VK_FORMAT_R8G8B8_UNORM -> NativeImage.InternalFormat.RGB;
-                case VK_FORMAT_R8G8B8A8_UNORM -> NativeImage.InternalFormat.RGBA;
+                case VK_FORMAT_R8_UNORM -> GpuFormat.R8_UNORM;
+                case VK_FORMAT_R8G8_UNORM -> GpuFormat.RG8_UNORM;
+                case VK_FORMAT_R8G8B8_UNORM -> GpuFormat.RGB8_UNORM;
+                case VK_FORMAT_R8G8B8A8_UNORM -> GpuFormat.RGBA8_UNORM;
                 default -> throw new IllegalStateException("Unexpected value: " + this.value);
             };
         }

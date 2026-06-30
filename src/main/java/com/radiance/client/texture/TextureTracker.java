@@ -1,14 +1,18 @@
 package com.radiance.client.texture;
 
+import com.mojang.blaze3d.GpuFormat;
 import com.radiance.client.constant.VulkanConstants;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.minecraft.resources.Identifier;
 
 public class TextureTracker {
 
-    public static Map<Identifier, Integer> textureID2GLID = new ConcurrentHashMap<>();
+    // 26.2: GpuTextures (and thus GL ids) are created lazily by the GpuDevice, so we
+    // can no longer capture an int GL id at registration time. Track the texture and
+    // resolve its GL id lazily via ((IAbstractTextureExt) tex).radiance$getGlIDUnsafe().
+    public static Map<Identifier, AbstractTexture> id2Texture = new ConcurrentHashMap<>();
     public static Map<Integer, Texture> GLID2Texture = new ConcurrentHashMap<>();
     public static Map<Integer, Integer> GLID2SpecularGLID = new ConcurrentHashMap<>();
     public static Map<Integer, Integer> GLID2NormalGLID = new ConcurrentHashMap<>();
@@ -25,28 +29,28 @@ public class TextureTracker {
             }
         }
 
-        public Texture(int width, int height, NativeImage.InternalFormat format, int maxLayer) {
+        // 26.2: built from com.mojang.blaze3d.GpuFormat (was NativeImage.InternalFormat).
+        public Texture(int width, int height, GpuFormat format, int maxLayer) {
             this(width, height, getChannel(format), getFormat(format), maxLayer);
         }
 
-        private static int getChannel(NativeImage.InternalFormat internalFormat) {
-            return switch (internalFormat) {
-                case RGBA -> 4;
-                case RGB -> 3;
-                case RG -> 2;
-                case RED -> 1;
-                default -> throw new IllegalArgumentException(
-                    "Unknown internal format: " + internalFormat);
+        private static int getChannel(GpuFormat format) {
+            return switch (format) {
+                case RGBA8_UNORM -> 4;
+                case RGB8_UNORM -> 3;
+                case RG8_UNORM -> 2;
+                case R8_UNORM -> 1;
+                default -> throw new IllegalArgumentException("Unsupported GPU format: " + format);
             };
         }
 
-        private static VulkanConstants.VkFormat getFormat(
-            NativeImage.InternalFormat internalFormat) {
-            return switch (internalFormat) {
-                case RGBA -> VulkanConstants.VkFormat.VK_FORMAT_R8G8B8A8_UNORM;
-                case RGB -> VulkanConstants.VkFormat.VK_FORMAT_R8G8B8_UNORM;
-                case RG -> VulkanConstants.VkFormat.VK_FORMAT_R8G8_UNORM;
-                case RED -> VulkanConstants.VkFormat.VK_FORMAT_R8_UNORM;
+        private static VulkanConstants.VkFormat getFormat(GpuFormat format) {
+            return switch (format) {
+                case RGBA8_UNORM -> VulkanConstants.VkFormat.VK_FORMAT_R8G8B8A8_UNORM;
+                case RGB8_UNORM -> VulkanConstants.VkFormat.VK_FORMAT_R8G8B8_UNORM;
+                case RG8_UNORM -> VulkanConstants.VkFormat.VK_FORMAT_R8G8_UNORM;
+                case R8_UNORM -> VulkanConstants.VkFormat.VK_FORMAT_R8_UNORM;
+                default -> throw new IllegalArgumentException("Unsupported GPU format: " + format);
             };
         }
     }
