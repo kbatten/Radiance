@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import net.fabricmc.api.ClientModInitializer;
-import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.Minecraft;
 import org.slf4j.Logger;
 
 public class RadianceClient implements ClientModInitializer {
@@ -32,8 +32,8 @@ public class RadianceClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        Path mcBaseDir = mc.runDirectory.toPath();
+        Minecraft mc = Minecraft.getInstance();
+        Path mcBaseDir = mc.gameDirectory.toPath();
         radianceDir = mcBaseDir.resolve("radiance");
         try {
             Files.createDirectories(radianceDir);

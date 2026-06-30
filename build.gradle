@@ -87,6 +87,9 @@ tasks.withType(JavaCompile).configureEach {
     // see http://yodaconditions.net/blog/fix-for-java-file-encoding-problems-with-gradle.html
     // If Javadoc is generated, this must be specified in that task too.
     it.options.encoding = "UTF-8"
+    // Raise the error cap so the in-progress 1.21.4 -> 26.2 source migration shows
+    // every diagnostic in one pass instead of stopping at the default 100.
+    it.options.compilerArgs += ["-Xmaxerrs", "2000", "-Xmaxwarns", "2000"]
     if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
         it.options.release.set(targetJavaVersion)
     }
