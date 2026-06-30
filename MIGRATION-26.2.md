@@ -221,9 +221,17 @@ importer actually needs it) instead of eagerly capturing it in
   RETURN and imports the created `GlTexture` into Vulkan by `glId()` (via
   `TextureProxy.prepareImage(GpuFormat,…)`), instead of cancelling+substituting GL
   allocation. The shared handle is the real `GlTexture#glId()`.
+- **Pixel-upload path — done:** `vulkan_render_integration/CommandEncoderMixins`
+  (new) hooks `CommandEncoder.writeToTexture(GpuTexture, NativeImage, …)` HEAD and
+  mirrors the upload to Vulkan via `TextureProxy.queueUpload`, keyed by
+  `GlTexture.glId()`. Uses public `NativeImage.getPointer()`/`getPixelBytes()` (both
+  now public), so no fragile `NativeImage` shadows are needed. (Was: `vri/NativeImageMixins`
+  hooking the removed `NativeImage.uploadInternal`.)
 - **Still to do (deeper):**
-  - Pixel uploads: the old `TextureProxy.queueUpload` path was driven from
-    `NativeImage.upload` (removed) → re-drive from `CommandEncoder.writeToTexture`.
+  - `vri/NativeImageMixins` other concerns — `radiance$alignTo`, the
+    `loadFromTextureImage` screenshot redirect, and closing the PBR aux images — still
+    target the old `NativeImage` internals (`getColor`/`setColor`→`getPixel`/`setPixel`,
+    etc.). The upload mirroring moved out to `CommandEncoderMixins`.
   - Upload-interception mixins (`NativeImageBackedTexture`, `ReloadableTexture`,
     `SpriteContents`, `SpriteAtlasTexture`) hooked `NativeImage.upload` (removed) to
     stamp `targetID` — replace with lazy resolution or a `CommandEncoder.writeToTexture`
@@ -264,6 +272,7 @@ only as the classes they reference are confirmed to survive.
 - `mixins/vanilla_resource_tracker/TextureUtilMixins` — retargeted `TextureUtil.prepareImage(InternalFormat,…)` (removed) → `GpuDevice.createTexture(…, GpuFormat, …)` RETURN, capturing the `GlTexture` id + metadata into `GLID2Texture`
 - `client/proxy/vulkan/TextureProxy` — `prepareImage(InternalFormat,…)` → `prepareImage(GpuFormat,…)` (via the canonical `VkFormat.fromGpuFormat`)
 - `mixins/vulkan_render_integration/TextureUtilMixins` — **Vulkan-substitution core** re-architected to the *import* model: hooks `GpuDevice.createTexture` RETURN and imports the created `GlTexture` into the Vulkan backend by `glId()` (was: redirect `TextureUtil.generateTextureId()`/`prepareImage` to cancel+substitute GL allocation)
+- `mixins/vulkan_render_integration/CommandEncoderMixins` (new) — **pixel-upload path**: hooks `CommandEncoder.writeToTexture(GpuTexture, NativeImage, …)` and mirrors the upload to Vulkan via `TextureProxy.queueUpload` (was: `vri/NativeImageMixins` on the removed `NativeImage.uploadInternal`)
 
 ### Deferred leaf files (need API-shape changes, not just renames)
 

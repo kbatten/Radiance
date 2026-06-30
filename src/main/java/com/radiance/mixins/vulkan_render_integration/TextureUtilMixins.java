@@ -26,9 +26,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * needed; {@code TextureProxy.generateTextureId()} remains only for the mod's own
  * auxiliary textures).
  *
- * <p>TODO(26.2): pixel uploads -- the matching {@code TextureProxy.queueUpload(...)}
- * path was driven from {@code NativeImage.upload}; re-drive it from
- * {@code CommandEncoder.writeToTexture} (see the upload-interception mixins).
+ * <p>Pixel uploads are mirrored separately in {@link CommandEncoderMixins} (the new
+ * {@code CommandEncoder.writeToTexture} path).
  */
 @Mixin(GpuDevice.class)
 public abstract class TextureUtilMixins {

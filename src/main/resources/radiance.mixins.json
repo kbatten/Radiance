@@ -39,6 +39,7 @@
     "vulkan_render_integration.ChunkBuilderMixins",
     "vulkan_render_integration.ClientChunkManagerMixins",
     "vulkan_render_integration.CloudRendererMixins",
+    "vulkan_render_integration.CommandEncoderMixins",
     "vulkan_render_integration.CompiledShaderMixins",
     "vulkan_render_integration.DirectoryAtlasSourceMixins",
     "vulkan_render_integration.DrawContextMixins",
