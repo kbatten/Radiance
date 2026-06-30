@@ -227,13 +227,19 @@ importer actually needs it) instead of eagerly capturing it in
   `GlTexture.glId()`. Uses public `NativeImage.getPointer()`/`getPixelBytes()` (both
   now public), so no fragile `NativeImage` shadows are needed. (Was: `vri/NativeImageMixins`
   hooking the removed `NativeImage.uploadInternal`.)
+- **PBR auxiliary textures — done:** `vrt/NativeImageMixins` (targetID/identifier/aux
+  storage), `vri/NativeImageMixins` (`radiance$alignTo`/`getPointer`/aux-close;
+  `getColor`/`setColor`→`getPixel`/`setPixel`, `pointer`→`pixels`, `getChannelCount`→
+  `components`, `getAlphaOffset`→`alphaOffset`) and `AuxiliaryTextures` itself (allocate
+  via `TextureProxy.prepareImage`, upload via `TextureProxy.queueUpload`,
+  `applyToCopy`→manual fill, `findResources`→`listResources`, `Resource.open`,
+  `AtlasSource.RESOURCE_FINDER`→`SpriteSource.TEXTURE_ID_CONVERTER`, `Identifier.of`→
+  `fromNamespaceAndPath`). `AuxiliaryTextureReloader` moved to
+  `PreparableReloadListener.reload(SharedState, …)`.
 - **Still to do (deeper):**
-  - `vri/NativeImageMixins` other concerns — `radiance$alignTo`, the
-    `loadFromTextureImage` screenshot redirect, and closing the PBR aux images — still
-    target the old `NativeImage` internals (`getColor`/`setColor`→`getPixel`/`setPixel`,
-    etc.). The upload mirroring moved out to `CommandEncoderMixins`.
-  - `AuxiliaryTextures` allocated its PBR textures via `TextureUtil.prepareImage` →
-    `GpuDevice.createTexture`.
+  - `vri/NativeImageMixins#radiance$loadFromTextureImageWithoutUI` (screenshot readback)
+    is a best-effort scaffold — `NativeImage.loadFromTextureImage` was removed; texture
+    download now goes through `GpuDevice`/`CommandEncoder`.
   - The `setFilter`/`setClamp` Vulkan redirects must move to the `GpuSampler` API
     (`AbstractTexture#sampler`, `RenderSystem.getSamplerCache()`).
 
@@ -282,7 +288,6 @@ only as the classes they reference are confirmed to survive.
 
 ### Deferred leaf files (need API-shape changes, not just renames)
 
-- `client/texture/AuxiliaryTextureReloader` — new `reload(SharedState, …)` shape
   (and depends on the render-coupled `AuxiliaryTextures`).
 - `client/gui/PotentialValuesBasedCallbacksNoValue` — `SimpleOption`→`OptionInstance`
   callback API rewrite.
