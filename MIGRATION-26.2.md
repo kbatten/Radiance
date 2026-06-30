@@ -174,6 +174,53 @@ Library imports unchanged: `com.mojang.logging.LogUtils`,
 `com.mojang.serialization.Codec`, `com.mojang.datafixers.util.Pair`
 (Yarn's `net.minecraft.util.Pair`), `net.minecraft.util.Unit`.
 
+## Texture-tracking subsystem (GpuTexture re-architecture)
+
+The mod's core GL→Vulkan bridge intercepted texture creation/upload to capture the
+**int GL texture id** and feed it to its Vulkan backend. In 26.2 the GL texture
+model is gone:
+
+- `AbstractTexture` no longer has `int glId` / `bindTexture()` / `setFilter()` /
+  `setClamp()` / `clearGlId()`. It now holds a `protected GpuTexture texture`
+  (`com.mojang.blaze3d.textures.GpuTexture`), a `GpuTextureView`, and a `GpuSampler`.
+- A `GpuTexture` is **backend-agnostic and created lazily by the `GpuDevice`**. On
+  the OpenGL backend it is a `com.mojang.blaze3d.opengl.GlTexture`, whose
+  `glId()` returns the GL name. (`GlTextureView.glId()` also exists.)
+- `NativeImage.upload(...)` is gone — uploads go through `GpuDevice` /
+  `CommandEncoder.writeToTexture`.
+- `TextureManager.registerTexture(...)` → `register(Identifier, AbstractTexture)`.
+
+**The primitive (implemented):** resolve the GL id from the backing `GpuTexture`:
+
+```java
+this.texture instanceof GlTexture gl ? gl.glId() : 0   // 0 = not yet created / non-GL backend
+```
+
+This is now provided by the two `AbstractTextureMixins`:
+- `vulkan_render_integration/AbstractTextureMixins#radiance$getGlIDUnsafe()` (throws
+  if unavailable) — the accessor the ~20 `getGlId()` call sites should switch to via
+  `((IAbstractTextureExt)(Object)tex).radiance$getGlIDUnsafe()`.
+- `vanilla_resource_tracker/AbstractTextureMixins#radiance$glId()` (returns 0 if
+  unavailable) — base helper for the tracking mixins.
+
+**Architectural shift required:** because the `GpuTexture` does not exist at
+registration/upload time, the mod must **resolve the GL id lazily** (when the Vulkan
+importer actually needs it) instead of eagerly capturing it in
+`TextureTracker.textureID2GLID` at register/upload. Concretely:
+
+- `TextureManagerMixins` / `SpriteAtlasTextureMixins` / `NativeImageBackedTextureMixins`
+  / `ReloadableTextureMixins` / `SpriteContentsMixins` injected at `NativeImage.upload`
+  to stamp a `targetID` — **obsolete**; replace with lazy `radiance$getGlIDUnsafe()`
+  at the consumption sites, or a new inject at the `GpuDevice.writeToTexture` path.
+- `TextureTracker.textureID2GLID` (Identifier→glId) should become Identifier→texture
+  (or be resolved on demand), and `TextureTracker.Texture` must drop the removed
+  `NativeImage.InternalFormat` (use `NativeImage.Format` / the `GpuTexture` format).
+- The `setFilter`/`setClamp` Vulkan redirects must move to the `GpuSampler` API
+  (`AbstractTexture#sampler`, `RenderSystem.getSamplerCache()`).
+
+The auxiliary PBR data (specular/normal/flag `NativeImage`s stashed via
+`INativeImageExt`) is largely independent of the GL path and can be retained.
+
 ## Access widener
 
 The original 40+ entries are Yarn-named and many target now-deleted classes
@@ -195,6 +242,7 @@ only as the classes they reference are confirmed to survive.
 - `mixins/vulkan_render_integration/ParticleMixins` (`Particle` x/y/z shadows survive)
 - `mixins/vanilla_resource_tracker/NamespaceResourceManagerMixins` (→`FallbackResourceManager`; `ResourcePack`→`PackResources`, `InputSupplier`→`IoSupplier`)
 - `mixins/vulkan_options/GameOptionsScreenMixins` (→`OptionsSubScreen`; shadow `body`→`list`:`OptionsList`, `gameOptions`→`options`:`Options`)
+- `mixins/vulkan_render_integration/AbstractTextureMixins` + `mixins/vanilla_resource_tracker/AbstractTextureMixins` — re-architected to the `GpuTexture`/`GlTexture.glId()` model (foundation of the texture-tracking subsystem; see below)
 
 ### Deferred leaf files (need API-shape changes, not just renames)
 
