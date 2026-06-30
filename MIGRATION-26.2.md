@@ -194,6 +194,7 @@ only as the classes they reference are confirmed to survive.
 - `mixins/vulkan_render_integration/ClientChunkManagerMixins` (→`ClientChunkCache.onLightUpdate(LightLayer,SectionPos)`)
 - `mixins/vulkan_render_integration/ParticleMixins` (`Particle` x/y/z shadows survive)
 - `mixins/vanilla_resource_tracker/NamespaceResourceManagerMixins` (→`FallbackResourceManager`; `ResourcePack`→`PackResources`, `InputSupplier`→`IoSupplier`)
+- `mixins/vulkan_options/GameOptionsScreenMixins` (→`OptionsSubScreen`; shadow `body`→`list`:`OptionsList`, `gameOptions`→`options`:`Options`)
 
 ### Deferred leaf files (need API-shape changes, not just renames)
 
@@ -215,6 +216,13 @@ only as the classes they reference are confirmed to survive.
     glyph/atlas system rebuilt (`FontSet`/`FontTexture`/`glyphs.*`).
   - **Atlas sources** (`Directory`/`Single`/`Unstitch`/`PalettedPermutations`):
     `AtlasSource.SpriteRegions` **removed** → `SpriteSource.run(ResourceManager, Output)`.
-  - **Options screens** (`GameOptionsScreen`, `VideoOptionsScreen`), **block color**
-    (`BlockColorsMixins`), **window** (`WindowMixins`), **particles**
-    (`ParticleManagerMixins`), **resource reload** (`ReloadableResourceManagerImplMixins`).
+  - **`VideoOptionsScreenMixins`** — built on the `SimpleOption` API
+    (`ValidatingIntSliderCallbacks`, `emptyTooltip()`, `ofBoolean`, `enumValueText()`),
+    now the structurally-different `OptionInstance` API.
+  - **`WindowMixins`** — the `Window` constructor was rewritten for the new
+    `GpuBackend` (7 args incl `boolean`/`GpuBackend`, reordered; the 6 redirected
+    `glfwWindowHint` ordinals + GL-context calls no longer exist).
+  - **`MipmapHelperMixins`** — `getMipmapLevelsImages(NativeImage[], int)` →
+    `MipmapGenerator.generateMipLevels(Identifier, NativeImage[], int, MipmapStrategy, …)`.
+  - **block color** (`BlockColorsMixins`), **particles** (`ParticleManagerMixins`),
+    **resource reload** (`ReloadableResourceManagerImplMixins`).
