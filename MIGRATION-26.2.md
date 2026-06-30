@@ -232,10 +232,6 @@ importer actually needs it) instead of eagerly capturing it in
     `loadFromTextureImage` screenshot redirect, and closing the PBR aux images — still
     target the old `NativeImage` internals (`getColor`/`setColor`→`getPixel`/`setPixel`,
     etc.). The upload mirroring moved out to `CommandEncoderMixins`.
-  - Upload-interception mixins (`NativeImageBackedTexture`, `ReloadableTexture`,
-    `SpriteContents`, `SpriteAtlasTexture`) hooked `NativeImage.upload` (removed) to
-    stamp `targetID` — replace with lazy resolution or a `CommandEncoder.writeToTexture`
-    hook.
   - `AuxiliaryTextures` allocated its PBR textures via `TextureUtil.prepareImage` →
     `GpuDevice.createTexture`.
   - The `setFilter`/`setClamp` Vulkan redirects must move to the `GpuSampler` API
@@ -243,6 +239,16 @@ importer actually needs it) instead of eagerly capturing it in
 
 The auxiliary PBR data (specular/normal/flag `NativeImage`s stashed via
 `INativeImageExt`) is largely independent of the GL path and can be retained.
+
+**Retired (obsolete):** the `targetID`-stamping mixins that pre-stamped a GL id onto
+each texture/sprite's `NativeImage` before upload — `NativeImageBackedTextureMixins`,
+`ReloadableTextureMixins`, `SpriteAtlasTextureMixins`, `SpriteMixins`,
+`SpriteContentsMixins` — plus the now-orphaned `ISpriteExt`/`ISpriteContentsExt`.
+`CommandEncoderMixins` keys the Vulkan upload by the destination `GlTexture.glId()`
+directly, so no pre-stamping is needed. (`INativeImageExt#radiance$getTargetID/
+setTargetID` is kept for now: `AuxiliaryTextures` and the deferred glyph/overlay
+mixins still set it; it becomes vestigial once those move to the
+`CommandEncoder.writeToTexture` hook too.)
 
 ## Access widener
 
