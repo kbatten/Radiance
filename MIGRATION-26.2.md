@@ -191,6 +191,9 @@ only as the classes they reference are confirmed to survive.
 - `client/proxy/world/PlayerProxy`
 - `mixin_related/extensions/vanilla_resource_tracker/{IGlyphAtlasTextureExt,INativeImageExt,IRenderableGlyphExt}`
 - `mixin_related/extensions/vulkan_render_integration/{IBlockColorsExt,INativeImageExt,IOverlayTextureExt,IParticleManagerExt}`
+- `mixins/vulkan_render_integration/ClientChunkManagerMixins` (→`ClientChunkCache.onLightUpdate(LightLayer,SectionPos)`)
+- `mixins/vulkan_render_integration/ParticleMixins` (`Particle` x/y/z shadows survive)
+- `mixins/vanilla_resource_tracker/NamespaceResourceManagerMixins` (→`FallbackResourceManager`; `ResourcePack`→`PackResources`, `InputSupplier`→`IoSupplier`)
 
 ### Deferred leaf files (need API-shape changes, not just renames)
 
@@ -202,5 +205,16 @@ only as the classes they reference are confirmed to survive.
   callback API rewrite.
 - `client/util/BlockColorEmissionProvider` — `BlockColorProvider` removed
   (block color → `BlockTintSource`).
-- The 27 `mixins/*` files — each needs its `@Mixin` target, `@Shadow` members and
-  `@Inject` method targets re-verified against the decompiled sources.
+- The remaining ~24 `mixins/*` files mostly hook **rewritten subsystems**, so they
+  need re-architecture rather than renaming (verified against the decompiled jar):
+  - **Texture tracking** (`AbstractTexture`, `TextureManager`, `NativeImageBackedTexture`,
+    `ReloadableTexture`, `Sprite*`, `NativeImage`, `MipmapHelper`): the mod hooks
+    `AbstractTexture.getGlId()`/`bindTexture()` and `NativeImage.upload(...)`, all
+    **removed** — textures are now `GpuTexture`/`GpuTextureView` via `GpuDevice`.
+  - **Font** (`BitmapFontGlyph`, `BuiltinEmptyGlyph`, `FontStorage`, `TtfGlyph`):
+    glyph/atlas system rebuilt (`FontSet`/`FontTexture`/`glyphs.*`).
+  - **Atlas sources** (`Directory`/`Single`/`Unstitch`/`PalettedPermutations`):
+    `AtlasSource.SpriteRegions` **removed** → `SpriteSource.run(ResourceManager, Output)`.
+  - **Options screens** (`GameOptionsScreen`, `VideoOptionsScreen`), **block color**
+    (`BlockColorsMixins`), **window** (`WindowMixins`), **particles**
+    (`ParticleManagerMixins`), **resource reload** (`ReloadableResourceManagerImplMixins`).
