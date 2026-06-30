@@ -236,12 +236,20 @@ importer actually needs it) instead of eagerly capturing it in
   `AtlasSource.RESOURCE_FINDER`→`SpriteSource.TEXTURE_ID_CONVERTER`, `Identifier.of`→
   `fromNamespaceAndPath`). `AuxiliaryTextureReloader` moved to
   `PreparableReloadListener.reload(SharedState, …)`.
-- **Still to do (deeper):**
+- **Sampler (filter/clamp) — done:** `vulkan_render_integration/ReloadableTextureMixins`
+  hooks `ReloadableTexture.apply` RETURN (where both the sampler and the `GpuTexture`
+  are set) and mirrors the decoupled `GpuSampler`'s filter/wrap to the Vulkan backend
+  via `TextureProxy.setFilter`/`setClamp`, keyed by `GlTexture.glId()`. (Was: the removed
+  `AbstractTexture.setFilter(ZZ)`/`setClamp(Z)` redirects.) `DynamicTexture`/`TextureAtlas`
+  would need equivalent hooks if their Vulkan sampling must match.
+- **Still to do (only this):**
   - `vri/NativeImageMixins#radiance$loadFromTextureImageWithoutUI` (screenshot readback)
     is a best-effort scaffold — `NativeImage.loadFromTextureImage` was removed; texture
     download now goes through `GpuDevice`/`CommandEncoder`.
-  - The `setFilter`/`setClamp` Vulkan redirects must move to the `GpuSampler` API
-    (`AbstractTexture#sampler`, `RenderSystem.getSamplerCache()`).
+
+**The texture-tracking subsystem is otherwise fully ported to the 26.2 GPU model**
+(GL-id resolution, registration, allocation/import, metadata, pixel upload, PBR aux
+textures, sampler), with the obsolete `targetID`-stamping mixins retired.
 
 The auxiliary PBR data (specular/normal/flag `NativeImage`s stashed via
 `INativeImageExt`) is largely independent of the GL path and can be retained.
@@ -285,6 +293,8 @@ only as the classes they reference are confirmed to survive.
 - `client/proxy/vulkan/TextureProxy` — `prepareImage(InternalFormat,…)` → `prepareImage(GpuFormat,…)` (via the canonical `VkFormat.fromGpuFormat`)
 - `mixins/vulkan_render_integration/TextureUtilMixins` — **Vulkan-substitution core** re-architected to the *import* model: hooks `GpuDevice.createTexture` RETURN and imports the created `GlTexture` into the Vulkan backend by `glId()` (was: redirect `TextureUtil.generateTextureId()`/`prepareImage` to cancel+substitute GL allocation)
 - `mixins/vulkan_render_integration/CommandEncoderMixins` (new) — **pixel-upload path**: hooks `CommandEncoder.writeToTexture(GpuTexture, NativeImage, …)` and mirrors the upload to Vulkan via `TextureProxy.queueUpload` (was: `vri/NativeImageMixins` on the removed `NativeImage.uploadInternal`)
+- `mixins/vulkan_render_integration/ReloadableTextureMixins` (new) — **sampler path**: hooks `ReloadableTexture.apply` RETURN and mirrors the `GpuSampler` filter/wrap to `TextureProxy.setFilter`/`setClamp` (was: the removed `AbstractTexture.setFilter`/`setClamp` redirects)
+- `mixins/vanilla_resource_tracker/{NativeImageMixins}` + `mixins/vulkan_render_integration/{NativeImageMixins}` + `client/texture/{AuxiliaryTextures,AuxiliaryTextureReloader}` — the PBR auxiliary-texture path
 
 ### Deferred leaf files (need API-shape changes, not just renames)
 

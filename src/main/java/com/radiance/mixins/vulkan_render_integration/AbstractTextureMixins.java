@@ -38,11 +38,9 @@ public class AbstractTextureMixins implements IAbstractTextureExt {
             "Texture GL id is not available (texture=" + this.texture + ")");
     }
 
-    // TODO(26.2): the former setFilter(ZZ)/setClamp(Z) redirects fed sampler state
-    //   to the Vulkan backend (TextureProxy.setFilter/setClamp). AbstractTexture no
-    //   longer exposes those; sampling is configured through GpuSampler
-    //   (AbstractTexture#sampler / RenderSystem.getSamplerCache()). Re-express by
-    //   intercepting sampler creation. See Sodium/Iris 26.2 for GpuSampler bridging.
+    // The former setFilter(ZZ)/setClamp(Z) redirects are re-expressed against the new
+    // decoupled GpuSampler in ReloadableTextureMixins (sampler is read at texture load
+    // and mirrored to TextureProxy.setFilter/setClamp).
     // TODO(26.2): bindTexture()/clearGlId() and lazy id generation via
     //   TextureUtil.generateTextureId() no longer exist -- GpuTextures are owned by
     //   the GpuDevice. The Vulkan importer should consume the GpuTexture directly
