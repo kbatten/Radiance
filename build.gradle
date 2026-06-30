@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.11-SNAPSHOT'
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
     id 'maven-publish'
 }
 
@@ -37,16 +37,30 @@ repositories {
         name = "Mojang"
         url = "https://libraries.minecraft.net/"
     }
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+        content {
+            includeGroup "maven.modrinth"
+        }
+    }
     mavenCentral()
 }
 
 dependencies {
     // To change the versions see the gradle.properties file
+    // Minecraft 26.2 is shipped de-obfuscated (official Mojang names), so no
+    // "mappings" / yarn dependency is declared -- Loom performs no remapping.
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
-    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // Sodium + Iris (from Modrinth) for the target render environment.
+    // Minecraft 26.2 is de-obfuscated, so Loom performs no mod remapping and the
+    // legacy "modImplementation" configuration is gone -- plain implementation is used.
+    implementation "maven.modrinth:sodium:${project.sodium_version}"
+    implementation "maven.modrinth:iris:${project.iris_version}"
 
     // https://mvnrepository.com/artifact/org.yaml/snakeyaml
     implementation "org.yaml:snakeyaml:2.5"
@@ -66,7 +80,7 @@ processResources {
     }
 }
 
-def targetJavaVersion = 21
+def targetJavaVersion = 25
 tasks.withType(JavaCompile).configureEach {
     // ensure that the encoding is set to UTF-8, no matter what the system default is
     // this fixes some edge cases with special characters not displaying correctly
@@ -89,17 +103,17 @@ java {
     withSourcesJar()
 }
 
+// Minecraft 26.2 is de-obfuscated: Loom performs no remapping, so there is no
+// "remapJar"/"remapSourcesJar" task -- the "jar" and "sourcesJar" tasks produce
+// the final artifacts directly.
 jar {
+    archiveFileName.set("${project.archives_base_name}-${project.version}-fabric-${project.minecraft_version}.jar")
     from("LICENSE") {
         rename { "${it}_${project.archivesBaseName}" }
     }
 }
 
-tasks.named("remapJar") {
-    archiveFileName.set("${project.archives_base_name}-${project.version}-fabric-${project.minecraft_version}.jar")
-}
-
-tasks.named("remapSourcesJar") {
+tasks.named("sourcesJar") {
     archiveFileName.set("${project.archives_base_name}-${project.version}-fabric-${project.minecraft_version}-sources.jar")
 }
 
