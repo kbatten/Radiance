@@ -1,33 +1,35 @@
 package com.radiance.mixins.vulkan_render_integration;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gl.Framebuffer;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.util.ScreenshotRecorder;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.platform.NativeImage;
+import com.radiance.mixin_related.extensions.vulkan_render_integration.INativeImageExt;
+import java.util.function.Consumer;
+import net.minecraft.client.Screenshot;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(ScreenshotRecorder.class)
+/**
+ * 26.2: {@code ScreenshotRecorder.takeScreenshot(Framebuffer) -> NativeImage} (synchronous)
+ * became {@code Screenshot.takeScreenshot(RenderTarget, int downscaleFactor,
+ * Consumer<NativeImage>)} (asynchronous, GpuDevice/CommandEncoder readback). Substitute the
+ * mod's Vulkan readback: build a render-target-sized image, fill it from the Vulkan backend
+ * ({@code radiance$loadFromTextureImageWithoutUI}), hand it to the callback, and cancel MC's
+ * GL readback.
+ */
+@Mixin(Screenshot.class)
 public class ScreenshotRecorderMixins {
 
-    @Inject(method = "takeScreenshot(Lnet/minecraft/client/gl/Framebuffer;)Lnet/minecraft/client/texture/NativeImage;",
-        at = @At(value = "HEAD"),
+    @Inject(
+        method = "takeScreenshot(Lcom/mojang/blaze3d/pipeline/RenderTarget;ILjava/util/function/Consumer;)V",
+        at = @At("HEAD"),
         cancellable = true)
-    private static void redirectTakeScreenshot(Framebuffer framebuffer,
-        CallbackInfoReturnable<NativeImage> cir) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        int
-            width =
-            mc.getWindow()
-                .getWidth();
-        int
-            height =
-            mc.getWindow()
-                .getHeight();
-        NativeImage nativeImage = new NativeImage(width, height, false);
-        nativeImage.loadFromTextureImage(0, true);
-        cir.setReturnValue(nativeImage);
+    private static void redirectTakeScreenshot(RenderTarget target, int downscaleFactor,
+        Consumer<NativeImage> callback, CallbackInfo ci) {
+        NativeImage nativeImage = new NativeImage(target.width, target.height, false);
+        ((INativeImageExt) (Object) nativeImage).radiance$loadFromTextureImageWithoutUI(0, true);
+        callback.accept(nativeImage);
+        ci.cancel();
     }
 }

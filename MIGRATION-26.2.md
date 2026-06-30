@@ -242,14 +242,17 @@ importer actually needs it) instead of eagerly capturing it in
   via `TextureProxy.setFilter`/`setClamp`, keyed by `GlTexture.glId()`. (Was: the removed
   `AbstractTexture.setFilter(ZZ)`/`setClamp(Z)` redirects.) `DynamicTexture`/`TextureAtlas`
   would need equivalent hooks if their Vulkan sampling must match.
-- **Still to do (only this):**
-  - `vri/NativeImageMixins#radiance$loadFromTextureImageWithoutUI` (screenshot readback)
-    is a best-effort scaffold — `NativeImage.loadFromTextureImage` was removed; texture
-    download now goes through `GpuDevice`/`CommandEncoder`.
+- **Screenshot readback — done:** `Screenshot.takeScreenshot(RenderTarget, int,
+  Consumer<NativeImage>)` (async, was the synchronous `ScreenshotRecorder.takeScreenshot(
+  Framebuffer) -> NativeImage`). `ScreenshotRecorderMixins` builds a render-target-sized
+  image, fills it from the Vulkan backend (`radiance$loadFromTextureImageWithoutUI` →
+  `RendererProxy.takeScreenshot`), hands it to the callback and cancels MC's GL readback.
+  `RendererProxy` migrated too (dropped the removed `RenderSystem.apiDescription`;
+  `Window.getHandle`→`handle`; unused `VertexFormat` import removed).
 
-**The texture-tracking subsystem is otherwise fully ported to the 26.2 GPU model**
-(GL-id resolution, registration, allocation/import, metadata, pixel upload, PBR aux
-textures, sampler), with the obsolete `targetID`-stamping mixins retired.
+**The texture-tracking subsystem is fully ported to the 26.2 GPU model** (GL-id
+resolution, registration, allocation/import, metadata, pixel upload, PBR aux textures,
+sampler, screenshot readback), with the obsolete `targetID`-stamping mixins retired.
 
 The auxiliary PBR data (specular/normal/flag `NativeImage`s stashed via
 `INativeImageExt`) is largely independent of the GL path and can be retained.

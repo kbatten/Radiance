@@ -118,9 +118,9 @@ public abstract class NativeImageMixins implements
 
     @Override
     public void radiance$loadFromTextureImageWithoutUI(int level, boolean removeAlpha) {
-        // TODO(26.2): NativeImage.loadFromTextureImage(IZ) was removed; texture readback
-        //   now goes through GpuDevice/CommandEncoder. RendererProxy.takeScreenshot reads
-        //   from the Vulkan backend into this image's buffer; the GL download path is gone.
+        // 26.2: NativeImage.loadFromTextureImage(IZ) was removed (GL download path gone).
+        // The mod never used the GL behaviour anyway -- RendererProxy.takeScreenshot reads
+        // from the Vulkan backend into this image's buffer.
         RenderSystem.assertOnRenderThread();
         RendererProxy.takeScreenshot(false, this.width, this.height, this.format.components(),
             this.pixels);
