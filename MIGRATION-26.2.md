@@ -216,12 +216,14 @@ importer actually needs it) instead of eagerly capturing it in
   (Identifier→`AbstractTexture`); `TextureTracker.Texture` **done** → built from
   `GpuFormat`. Metadata capture **done**: `TextureUtilMixins` now hooks
   `GpuDevice.createTexture` RETURN (was `TextureUtil.prepareImage`).
+- **Vulkan-substitution core — done (import model):**
+  `vulkan_render_integration/TextureUtilMixins` now hooks `GpuDevice.createTexture`
+  RETURN and imports the created `GlTexture` into Vulkan by `glId()` (via
+  `TextureProxy.prepareImage(GpuFormat,…)`), instead of cancelling+substituting GL
+  allocation. The shared handle is the real `GlTexture#glId()`.
 - **Still to do (deeper):**
-  - `vulkan_render_integration/TextureUtilMixins` — *replaces* MC's GL texture
-    allocation with Vulkan (`generateTextureId()`/`prepareImage` redirects, both
-    removed). This must move to `GpuDevice`-backend level (intercept/replace
-    `createTexture` to return Vulkan-backed `GpuTexture`s, or supply a Vulkan
-    `GpuDeviceBackend`). `TextureProxy.prepareImage(InternalFormat,…)` → `GpuFormat`.
+  - Pixel uploads: the old `TextureProxy.queueUpload` path was driven from
+    `NativeImage.upload` (removed) → re-drive from `CommandEncoder.writeToTexture`.
   - Upload-interception mixins (`NativeImageBackedTexture`, `ReloadableTexture`,
     `SpriteContents`, `SpriteAtlasTexture`) hooked `NativeImage.upload` (removed) to
     stamp `targetID` — replace with lazy resolution or a `CommandEncoder.writeToTexture`
@@ -260,11 +262,11 @@ only as the classes they reference are confirmed to survive.
 - `client/texture/TextureTracker` — `Texture` built from `GpuFormat`; `textureID2GLID` (dead) → lazy `id2Texture` (`Identifier`→`AbstractTexture`)
 - `mixins/vanilla_resource_tracker/TextureManagerMixins` — `registerTexture`→`register`; records the texture for lazy GL-id resolution
 - `mixins/vanilla_resource_tracker/TextureUtilMixins` — retargeted `TextureUtil.prepareImage(InternalFormat,…)` (removed) → `GpuDevice.createTexture(…, GpuFormat, …)` RETURN, capturing the `GlTexture` id + metadata into `GLID2Texture`
+- `client/proxy/vulkan/TextureProxy` — `prepareImage(InternalFormat,…)` → `prepareImage(GpuFormat,…)` (via the canonical `VkFormat.fromGpuFormat`)
+- `mixins/vulkan_render_integration/TextureUtilMixins` — **Vulkan-substitution core** re-architected to the *import* model: hooks `GpuDevice.createTexture` RETURN and imports the created `GlTexture` into the Vulkan backend by `glId()` (was: redirect `TextureUtil.generateTextureId()`/`prepareImage` to cancel+substitute GL allocation)
 
 ### Deferred leaf files (need API-shape changes, not just renames)
 
-- `client/constant/VulkanConstants`, `client/proxy/vulkan/TextureProxy`,
-  `client/texture/TextureTracker` — use the removed `NativeImage.InternalFormat`.
 - `client/texture/AuxiliaryTextureReloader` — new `reload(SharedState, …)` shape
   (and depends on the render-coupled `AuxiliaryTextures`).
 - `client/gui/PotentialValuesBasedCallbacksNoValue` — `SimpleOption`→`OptionInstance`

@@ -66,6 +66,18 @@ public class VulkanConstants {
             };
         }
 
+        // Canonical reverse mapping used by the texture-tracking / Vulkan-import code.
+        // Returns null for formats the Vulkan backend does not track (depth, float, etc.).
+        public static VkFormat fromGpuFormat(GpuFormat format) {
+            return switch (format) {
+                case RGBA8_UNORM -> VK_FORMAT_R8G8B8A8_UNORM;
+                case RGB8_UNORM -> VK_FORMAT_R8G8B8_UNORM;
+                case RG8_UNORM -> VK_FORMAT_R8G8_UNORM;
+                case R8_UNORM -> VK_FORMAT_R8_UNORM;
+                default -> null;
+            };
+        }
+
         public NativeImage.Format getNativeImageFormat() {
             return switch (this) {
                 case VK_FORMAT_R8G8B8_UNORM -> NativeImage.Format.RGB;

@@ -2,13 +2,13 @@ package com.radiance.client.proxy.vulkan;
 
 import static org.lwjgl.system.MemoryUtil.memAddress;
 
+import com.mojang.blaze3d.GpuFormat;
 import com.radiance.client.constant.VulkanConstants;
 import com.radiance.client.option.Options;
 import com.radiance.client.texture.EmissionRecorder;
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import net.minecraft.client.texture.NativeImage;
 import org.lwjgl.system.MemoryUtil;
 
 public class TextureProxy {
@@ -122,25 +122,14 @@ public class TextureProxy {
         }
     }
 
-    public static void prepareImage(NativeImage.InternalFormat internalFormat, int id,
-        int mipLevels, int width, int height) {
-        switch (internalFormat) {
-            case RGBA:
-                prepareImage(id, mipLevels, width, height,
-                    VulkanConstants.VkFormat.VK_FORMAT_R8G8B8A8_UNORM);
-                break;
-            case RGB:
-                prepareImage(id, mipLevels, width, height,
-                    VulkanConstants.VkFormat.VK_FORMAT_R8G8B8_UNORM);
-                break;
-            case RG:
-                prepareImage(id, mipLevels, width, height,
-                    VulkanConstants.VkFormat.VK_FORMAT_R8G8_UNORM);
-                break;
-            case RED:
-                prepareImage(id, mipLevels, width, height,
-                    VulkanConstants.VkFormat.VK_FORMAT_R8_UNORM);
-                break;
+    // 26.2: NativeImage.InternalFormat was removed; texture formats are now
+    // com.mojang.blaze3d.GpuFormat. Imports a GL texture's storage into the Vulkan
+    // backend for the formats the backend tracks (others are ignored).
+    public static void prepareImage(GpuFormat format, int id, int mipLevels, int width,
+        int height) {
+        VulkanConstants.VkFormat vkFormat = VulkanConstants.VkFormat.fromGpuFormat(format);
+        if (vkFormat != null) {
+            prepareImage(id, mipLevels, width, height, vkFormat);
         }
     }
 }
