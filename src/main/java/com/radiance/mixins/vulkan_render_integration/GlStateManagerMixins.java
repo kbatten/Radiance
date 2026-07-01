@@ -1,6 +1,6 @@
 package com.radiance.mixins.vulkan_render_integration;
 
-import com.mojang.blaze3d.platform.GlStateManager;
+import com.mojang.blaze3d.opengl.GlStateManager;
 import com.radiance.client.constant.VulkanConstants;
 import com.radiance.client.proxy.vulkan.DrawCommandProxy;
 import com.radiance.client.proxy.vulkan.PipelineStateProxy;
@@ -87,15 +87,7 @@ public class GlStateManagerMixins {
         ci.cancel();
     }
 
-    @Inject(method = "_blendFunc(II)V",
-        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V", shift = At.Shift.AFTER),
-        cancellable = true,
-        remap = false)
-    private static void redirectBlendFunc(int srcFactor, int dstFactor, CallbackInfo ci) {
-        PipelineStateProxy.ColorBlendState.glSetBlendFuncCombined(srcFactor, dstFactor);
-        ci.cancel();
-    }
-
+    // 26.2: GlStateManager dropped the combined _blendFunc(II); only _blendFuncSeparate remains.
     @Inject(method = "_blendFuncSeparate(IIII)V",
         at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V", shift = At.Shift.AFTER),
         cancellable = true,
@@ -110,12 +102,14 @@ public class GlStateManagerMixins {
         ci.cancel();
     }
 
-    @Inject(method = "_blendEquation(I)V",
+    // 26.2: _blendEquation(I) -> _blendEquationSeparate(II). Every vanilla blend state uses the
+    // same op for RGB and alpha, so apply the RGB mode to the mod's combined blend op.
+    @Inject(method = "_blendEquationSeparate(II)V",
         at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V", shift = At.Shift.AFTER),
         cancellable = true,
         remap = false)
-    private static void redirectBlendEquation(int mode, CallbackInfo ci) {
-        PipelineStateProxy.ColorBlendState.glSetBlendOpCombined(mode);
+    private static void redirectBlendEquation(int modeRgb, int modeAlpha, CallbackInfo ci) {
+        PipelineStateProxy.ColorBlendState.glSetBlendOpCombined(modeRgb);
         ci.cancel();
     }
 
@@ -200,32 +194,8 @@ public class GlStateManagerMixins {
         ci.cancel();
     }
 
-    @Inject(method = "_stencilFunc(III)V",
-        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V", shift = At.Shift.AFTER),
-        cancellable = true,
-        remap = false)
-    private static void redirectStencilFunc(int func, int ref, int mask, CallbackInfo ci) {
-        PipelineStateProxy.DepthStencilState.glSetStencilFunc(func, ref, mask);
-        ci.cancel();
-    }
-
-    @Inject(method = "_stencilMask(I)V",
-        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V", shift = At.Shift.AFTER),
-        cancellable = true,
-        remap = false)
-    private static void redirectStencilMask(int mask, CallbackInfo ci) {
-        PipelineStateProxy.DepthStencilState.vkSetStencilWriteMask(mask);
-        ci.cancel();
-    }
-
-    @Inject(method = "_stencilOp(III)V",
-        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V", shift = At.Shift.AFTER),
-        cancellable = true,
-        remap = false)
-    private static void redirectStencilMask(int sfail, int dpfail, int dppass, CallbackInfo ci) {
-        PipelineStateProxy.DepthStencilState.glSetStencilOp(sfail, dpfail, dppass);
-        ci.cancel();
-    }
+    // 26.2: GlStateManager no longer exposes stencil (_stencilFunc/_stencilMask/_stencilOp);
+    // stencil state moved into RenderPipeline, so those redirects are dropped.
     // endregion
 
     // region <PipelineStateProxy.RasterizationState>
@@ -289,33 +259,11 @@ public class GlStateManagerMixins {
     // endregion
 
     // region <PipelineStateProxy.ClearState>
-    @Inject(method = "_clearColor(FFFF)V",
-        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThreadOrInit()V", shift = At.Shift.AFTER),
-        cancellable = true,
-        remap = false)
-    private static void redirectClearColor(float red, float green, float blue, float alpha,
-        CallbackInfo ci) {
-        PipelineStateProxy.ClearState.setClearColor(red, green, blue, alpha);
-        ci.cancel();
-    }
-
-    @Inject(method = "_clearDepth(D)V",
-        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThreadOrInit()V", shift = At.Shift.AFTER),
-        cancellable = true,
-        remap = false)
-    private static void redirectClearDepth(double depth, CallbackInfo ci) {
-        PipelineStateProxy.ClearState.setClearDepth(depth);
-        ci.cancel();
-    }
-
-    @Inject(method = "_clearStencil(I)V",
-        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V", shift = At.Shift.AFTER),
-        cancellable = true,
-        remap = false)
-    private static void redirectClearStencil(int stencil, CallbackInfo ci) {
-        PipelineStateProxy.ClearState.setClearStencil(stencil);
-        ci.cancel();
-    }
+    // 26.2: the separate _clearColor/_clearDepth/_clearStencil setters were replaced by
+    // _clearBuffer(index, color) / _clearBuffer(depth) which pass the clear value directly, so the
+    // "set clear state, then _clear" model is gone; those setters are dropped (the _clear redirect
+    // below stays). Clear-color/depth handling to be revisited via _clearBuffer when the
+    // pipeline-state path is validated.
     // endregion
 
     // region <DrawCommandProxy.Overlay>
