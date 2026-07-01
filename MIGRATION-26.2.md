@@ -267,6 +267,26 @@ setTargetID` is kept for now: `AuxiliaryTextures` and the deferred glyph/overlay
 mixins still set it; it becomes vestigial once those move to the
 `CommandEncoder.writeToTexture` hook too.)
 
+## Native-contract assessment (portable vs blocked)
+
+The mod's Java mixins mostly **capture MC data and hand it across JNI** to the native Vulkan
+`core` (not in this repo). A subsystem is portable from the Java side iff the Java→native
+*contract* (the `native` method signatures) survives the MC API change — the native side sees
+raw ids/pointers/packed bytes, not MC types.
+
+| Subsystem | Native contract | Verdict |
+| --- | --- | --- |
+| **Textures** | glId + pixel pointers + `VkFormat` | ✅ preserved → **done** |
+| **`BufferProxy`** (vertex/index buffers, world/sky/overlay uniforms) | `queueUpload(ptr,id)`, `initializeBuffer(id,size,usage)`, `updateWorldUniform(ptr)` … all primitives/pointers | ✅ preserved → **portable (moderate)**: re-extract from `MeshData` (`getBuffer`→`vertexBuffer`, `DrawParameters`→`DrawState`, `DrawMode`→`PrimitiveTopology`, `getVertexSizeByte`→`getVertexSize`) + matrices/`Camera`/`Fog`; drop/re-map `RenderPhase.setupGlintTexturing` |
+| **`ChunkProxy`** | `initNative`, `rebuildSingle`, `isChunkReady`, `relocateSingle` … pure primitives | ✅ contract preserved, but the *extraction* drives MC's **rewritten** chunk builder (`ChunkBuilder`/`SectionBuilder`/`ChunkRendererRegion` → `SectionRenderDispatcher`/`SectionCompiler`) → **portable but heavy** |
+| **`EntityProxy`** | `queueBuild(...)`, `build()` | ✅ contract preserved, but the *extraction* uses the **rewritten** `VertexConsumer` API + `VertexConsumerProvider`→`MultiBufferSource` + entity dispatch → **portable but heavy** |
+| **Shaders** | uniform data model | ❌ **contract changed** (individual `GlUniform` → UBO blocks) *and* native code absent → **blocked** (below) |
+
+So the geometry/vertex path is **not** native-blocked — it can be ported from Java once the
+underlying MC-subsystem rewrites (vertex consumers, chunk rendering) are done. Only the shader
+subsystem is truly blocked. Note: even a fully-ported Java side still needs the native `core`
+rebuilt for shaders to render.
+
 ## Shader / render-pipeline subsystem (blocked on native code)
 
 The mod **virtualizes** MC's GL shader pipeline: `CompiledShaderMixins`/`ShaderProgramMixins`
