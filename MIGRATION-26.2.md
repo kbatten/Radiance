@@ -629,6 +629,17 @@ rewrite. `BillboardParticleMixins` similarly writes to a `VertexConsumer`. The g
 remainder is the **non-render-hook** files (`GlStateManager`, `Lightmap`, `AuxiliaryTextures` ✅,
 `ParticleManager`) — large but not tied to the render-model change.
 
+**`LightmapTextureManagerMixins` (366 L) is a rearchitecture, not a port.** 26.2's lightmap went
+from `LightmapTextureManager(GameRenderer, Minecraft)` (a `SimpleFramebuffer` + CPU `update(F)` +
+`enable`/`disable`) to `net.minecraft.client.renderer.Lightmap()` — a `GpuTexture` +
+`GpuTextureView` + `MappableRingBuffer` UBO with `render(LightmapRenderState)`, driven by a
+`LightmapRenderStateExtractor` (the extract-render-state model, like the GUI). The mod's whole
+approach (cancel MC's framebuffer, compute the lightmap on CPU into a `NativeImageBackedTexture`,
+bind it) has no direct 26.2 shape — the ctor, framebuffer shadows, and `update`/`enable`/`disable`
+hooks all target a removed structure. `ParticleManagerMixins` is coupled to `EntityProxy`
+(`PARTICLE_COUNTERS`), so it lands with the entity/`SubmitNodeCollector` crux. Of the "large
+non-render-hook ports", only **`GlStateManager` was genuinely tractable (done)**.
+
 `RenderType` texture extraction (needed by whatever feeds `PBRVertexConsumer` on the entity path):
 `RenderType.state.textures.values().first().location()` — reachable via access-widener (26.2 is
 de-obfuscated so `TextureBinding.location()` is already public; widen the `TextureBinding` class +
