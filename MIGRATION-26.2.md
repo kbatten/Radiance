@@ -298,10 +298,37 @@ only as the classes they reference are confirmed to survive.
 - `mixins/vulkan_render_integration/CommandEncoderMixins` (new) — **pixel-upload path**: hooks `CommandEncoder.writeToTexture(GpuTexture, NativeImage, …)` and mirrors the upload to Vulkan via `TextureProxy.queueUpload` (was: `vri/NativeImageMixins` on the removed `NativeImage.uploadInternal`)
 - `mixins/vulkan_render_integration/ReloadableTextureMixins` (new) — **sampler path**: hooks `ReloadableTexture.apply` RETURN and mirrors the `GpuSampler` filter/wrap to `TextureProxy.setFilter`/`setClamp` (was: the removed `AbstractTexture.setFilter`/`setClamp` redirects)
 - `mixins/vanilla_resource_tracker/{NativeImageMixins}` + `mixins/vulkan_render_integration/{NativeImageMixins}` + `client/texture/{AuxiliaryTextures,AuxiliaryTextureReloader}` — the PBR auxiliary-texture path
+- `mixins/vulkan_render_integration/{ScreenshotRecorderMixins}` + `client/proxy/vulkan/RendererProxy` — screenshot readback
+- `client/vertex/{PBRVertexFormatElements,PBRVertexFormats}` — vertex-format foundation (see Vertex path below)
+
+## Vertex path (partial)
+
+The custom PBR vertex pipeline is a deep rewrite. Foundation **done**:
+- `PBRVertexFormatElements` — Yarn `VertexFormatElement.register(id, uv, ComponentType,
+  Usage, count)` → 26.2 `GpuFormat` constants (the element record is now just
+  `(name, offset, GpuFormat)`; no id/Usage/ComponentType).
+- `PBRVertexFormats` — `VertexFormat.builder()` → `builder(0)`, `add(name, element)` →
+  `addAttribute(name, GpuFormat)`; the removed `Builder#skip(4)` is an explicit 4-byte
+  `Padding` attribute.
+
+**Still a ground-up rewrite** (removed/rewritten APIs, not mechanical renames):
+- `client/vertex/PBRVertexConsumer` (602 L) — built on the removed **`RenderPhase`/
+  `RenderLayer.MultiPhase.phases`** state system and the removed **element-id model**
+  (`element.id()`/`getBit()`/`getRequiredMask()`/`format.has`), plus the renamed
+  `VertexConsumer` methods (`vertex`/`color`/`texture`/`overlay`/`next` →
+  `addVertex`/`setColor`/`setUv`/`setUv1`/…). `BuiltBuffer`→`MeshData`,
+  `BufferAllocator`→`ByteBufferBuilder`, `VertexFormat.DrawMode`→`Mode`.
+- `client/vertex/{StorageVertexConsumerProvider,StorageOutlineVertexConsumerProvider}` —
+  `VertexConsumerProvider`→`MultiBufferSource`, `RenderLayer`→`RenderType`.
+- `client/proxy/vulkan/BufferProxy` — `RenderPhase`, `BuiltBuffer`→`MeshData`, `Fog`,
+  `Camera`, `ClientWorld`→`ClientLevel`.
+
+These need the shader/`RenderPipeline` design (how the mod's custom attribute scheme and
+render-state derivation map to the new GPU model), so they are best done with the
+shader/render-pipeline subsystem.
 
 ### Deferred leaf files (need API-shape changes, not just renames)
 
-  (and depends on the render-coupled `AuxiliaryTextures`).
 - `client/gui/PotentialValuesBasedCallbacksNoValue` — `SimpleOption`→`OptionInstance`
   callback API rewrite.
 - `client/util/BlockColorEmissionProvider` — `BlockColorProvider` removed
