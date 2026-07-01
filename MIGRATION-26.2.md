@@ -505,9 +505,11 @@ inside the dispatcher. Two candidate integrations:
 The `RenderSection` lifecycle mixin (`reset`/`setSectionNode` → enqueue/relocate) and the storage
 mixin fall out of whichever integration is chosen.
 
-**Decision: Approach A** (1.21.11 stays maintained, so the 26.2 port is kept structurally
-parallel to upstream for forward-porting — see memory `keep-26_2-parallel-to-1-21-11`). Mapped
-implementation:
+**Decision: Approach A — DONE.** The whole chunk-rebuild cluster compiles clean (`ChunkProxy` +
+`ChunkBuilderBuiltChunkMixins` + `BuiltChunkStorageMixins` + `ChunkBuilderMixins` dispatcher
+capture + `IViewAreaExt`; `IChunkBuilderBuiltChunkExt` retired). 1.21.11 stays maintained, so the
+port was kept structurally parallel to upstream for forward-porting — see memory
+`keep-26_2-parallel-to-1-21-11`. Implementation as built:
 - **Compile trigger** — `@Inject` HEAD-cancellable into `RenderSection.compileAsync(RenderSectionRegion)`
   (MC calls it from `LevelRenderer` only when a section is dirty & should build) →
   `ChunkProxy.enqueueRebuild(self)` + `ci.cancel()`. Replaces the old `scheduleRebuild`/`clear`

@@ -1,16 +1,19 @@
 package com.radiance.client.proxy.world;
 
-import static net.minecraft.client.render.VertexFormat.DrawMode.QUADS;
 import static org.lwjgl.system.MemoryUtil.memAddress;
 
-import com.mojang.blaze3d.systems.VertexSorter;
+import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.blaze3d.vertex.MeshData;
+import com.mojang.blaze3d.vertex.VertexSorting;
 import com.radiance.client.constant.Constants;
 import com.radiance.client.option.Options;
 import com.radiance.client.proxy.vulkan.BufferProxy;
-import com.radiance.mixin_related.extensions.vulkan_render_integration.IChunkBuilderBuiltChunkExt;
+import com.radiance.mixin_related.extensions.vulkan_render_integration.IAbstractTextureExt;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IChunkBuilderExt;
+import com.radiance.mixin_related.extensions.vulkan_render_integration.IViewAreaExt;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,43 +22,49 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.BuiltBuffer;
-import net.minecraft.client.render.BuiltChunkStorage;
-import net.minecraft.client.render.Camera;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.chunk.BlockBufferAllocatorStorage;
-import net.minecraft.client.render.chunk.ChunkBuilder;
-import net.minecraft.client.render.chunk.ChunkRendererRegion;
-import net.minecraft.client.render.chunk.ChunkRendererRegionBuilder;
-import net.minecraft.client.render.chunk.SectionBuilder;
-import net.minecraft.client.texture.MissingSprite;
-import net.minecraft.client.texture.TextureManager;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkSectionPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.SectionBufferBuilderPack;
+import net.minecraft.client.renderer.ViewArea;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
+import net.minecraft.client.renderer.chunk.CompiledSectionMesh;
+import net.minecraft.client.renderer.chunk.RenderRegionCache;
+import net.minecraft.client.renderer.chunk.RenderSectionRegion;
+import net.minecraft.client.renderer.chunk.SectionCompiler;
+import net.minecraft.client.renderer.chunk.SectionMesh;
+import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
+import net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection;
+import net.minecraft.client.renderer.texture.TextureAtlas;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.SectionPos;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import org.lwjgl.system.MemoryUtil;
 
 public class ChunkProxy {
 
-    public static final ChunkBuilder.ChunkData PROCESSED = new ChunkBuilder.ChunkData() {
+    // 26.2: ChunkBuilder.ChunkData -> SectionMesh. These sentinels are consulted by
+    // WorldRendererMixins; a section that can't see through any face renders nothing on MC's side
+    // (the mod renders terrain through its native backend).
+    public static final SectionMesh PROCESSED = new SectionMesh() {
         @Override
-        public boolean isVisibleThrough(Direction from, Direction to) {
+        public boolean facesCanSeeEachother(Direction direction1, Direction direction2) {
             return false;
         }
     };
-    public static final ChunkBuilder.ChunkData TERRAIN_EMPTY = new ChunkBuilder.ChunkData() {
+    public static final SectionMesh TERRAIN_EMPTY = new SectionMesh() {
         @Override
-        public boolean isVisibleThrough(Direction from, Direction to) {
+        public boolean facesCanSeeEachother(Direction direction1, Direction direction2) {
             return false;
         }
     };
-    private static final Map<Integer, ChunkBuilder.BuiltChunk> rebuildQueue = new ConcurrentHashMap<>();
+    private static final Map<Integer, RenderSection> rebuildQueue = new ConcurrentHashMap<>();
     private static final java.util.Set<Integer> forcedRebuildIndices = ConcurrentHashMap.newKeySet();
     private static final List<Future<?>> rebuildTasks = new ArrayList<>();
-    private static BuiltChunkStorage currentStorage = null;
+    private static ViewArea currentStorage = null;
+    private static SectionRenderDispatcher currentDispatcher = null;
+    private static volatile boolean initialized = false;
     private static boolean pendingRebuildAll = false;
     private static int numChunkRebuildThreads = getChunkRebuildThreadCount();
     private static final int numImportantChunkRebuildThreads = 1;
@@ -68,9 +77,9 @@ public class ChunkProxy {
             thread.setPriority(Thread.NORM_PRIORITY);
             return thread;
         });
-    private static final ThreadLocal<BlockBufferAllocatorStorage>
-        blockBufferAllocatorStorageThreadLocal =
-        ThreadLocal.withInitial(BlockBufferAllocatorStorage::new);
+    private static final ThreadLocal<SectionBufferBuilderPack>
+        sectionBufferBuilderPackThreadLocal =
+        ThreadLocal.withInitial(SectionBufferBuilderPack::new);
     public static int builtChunkNum = 0;
     private static ExecutorService backgroundChunkRebuildExecutor = Executors.newFixedThreadPool(
         numNormalChunkRebuildThreads, r -> {
@@ -88,14 +97,18 @@ public class ChunkProxy {
         int bottomSectionCoord) {
         clear();
         initNative(numChunks, sizeX, sizeY, sizeZ, bottomSectionCoord);
+        initialized = true;
     }
 
-    public static void updateSectionPos(ChunkSectionPos sectionPos) {
-        updateSectionPosNative(sectionPos.getSectionX(), sectionPos.getSectionY(),
-            sectionPos.getSectionZ());
+    public static boolean isInitialized() {
+        return initialized;
     }
 
-    public static void setStorage(BuiltChunkStorage storage) {
+    public static void updateSectionPos(SectionPos sectionPos) {
+        updateSectionPosNative(sectionPos.x(), sectionPos.y(), sectionPos.z());
+    }
+
+    public static void setStorage(ViewArea storage) {
         currentStorage = storage;
         if (currentStorage != null && pendingRebuildAll) {
             pendingRebuildAll = false;
@@ -103,10 +116,13 @@ public class ChunkProxy {
         }
     }
 
+    public static void setDispatcher(SectionRenderDispatcher dispatcher) {
+        currentDispatcher = dispatcher;
+    }
+
     private static int getChunkRebuildThreadCount() {
-        int expectedBufferTotal = RenderLayer.getBlockLayers()
-            .stream()
-            .mapToInt(RenderLayer::getExpectedBufferSize)
+        int expectedBufferTotal = Arrays.stream(ChunkSectionLayer.values())
+            .mapToInt(ChunkSectionLayer::bufferSize)
             .sum();
         int memoryLimited = Math.max(1,
             (int) (Runtime.getRuntime().maxMemory() * 0.3) / (expectedBufferTotal * 4) - 1);
@@ -116,9 +132,9 @@ public class ChunkProxy {
     }
 
     public static AutoCloseable scopedBlockBufferAllocatorStorage() {
-        final BlockBufferAllocatorStorage s = blockBufferAllocatorStorageThreadLocal.get();
-        s.reset();
-        return s::clear;
+        final SectionBufferBuilderPack s = sectionBufferBuilderPackThreadLocal.get();
+        s.clearAll();
+        return s::clearAll;
     }
 
     public static void clear() {
@@ -147,12 +163,12 @@ public class ChunkProxy {
         pendingRebuildAll = false;
     }
 
-    public static void enqueueRebuild(ChunkBuilder.BuiltChunk chunk) {
+    public static void enqueueRebuild(RenderSection chunk) {
         rebuildQueue.put(chunk.index, chunk);
     }
 
     public static void rebuildAll() {
-        if (currentStorage == null || currentStorage.chunks == null) {
+        if (currentStorage == null) {
             pendingRebuildAll = true;
             return;
         }
@@ -160,47 +176,42 @@ public class ChunkProxy {
         queueRebuildAll(currentStorage);
     }
 
-    private static void queueRebuildAll(BuiltChunkStorage storage) {
-        if (storage == null || storage.chunks == null) {
+    private static void queueRebuildAll(ViewArea storage) {
+        if (storage == null) {
             pendingRebuildAll = true;
             return;
         }
 
-        for (ChunkBuilder.BuiltChunk builtChunk : storage.chunks) {
-            if (builtChunk == null) {
+        for (RenderSection renderSection : ((IViewAreaExt) storage).radiance$getSections()) {
+            if (renderSection == null) {
                 continue;
             }
-            forcedRebuildIndices.add(builtChunk.index);
-            builtChunk.scheduleRebuild(true);
-            enqueueRebuild(builtChunk);
+            forcedRebuildIndices.add(renderSection.index);
+            enqueueRebuild(renderSection);
         }
     }
 
     public static void rebuild(Camera camera) {
 
-        BlockPos blockPos = camera.getBlockPos();
-        for (ChunkBuilder.BuiltChunk builtChunk : rebuildQueue.values()) {
-            boolean forced = forcedRebuildIndices.remove(builtChunk.index);
-            if (builtChunk.needsRebuild() && (forced || builtChunk.shouldBuild())) {
-                builtChunk.cancelRebuild();
+        BlockPos blockPos = camera.blockPosition();
+        // 26.2: RenderSection dropped needsRebuild/shouldBuild/cancelRebuild/needsImportantRebuild;
+        // the dirty state moved into MC's section manager and reaches us via the compileAsync hook,
+        // so queue membership already means "needs building" -- we just prioritise by distance.
+        for (RenderSection renderSection : rebuildQueue.values()) {
+            forcedRebuildIndices.remove(renderSection.index);
 
-                BlockPos
-                    chunkCenterPos =
-                    builtChunk.getOrigin()
-                        .add(8, 8, 8);
-                boolean isImportant = chunkCenterPos.getSquaredDistance(blockPos) < 768.0
-                    || builtChunk.needsImportantRebuild();
+            BlockPos chunkCenterPos = renderSection.getRenderOrigin().offset(8, 8, 8);
+            boolean isImportant = chunkCenterPos.distSqr(blockPos) < 768.0;
 
-                if (isImportant) {
-                    Future<?> rebuildTask = importantChunkRebuildExecutor.submit(() -> {
-                        rebuildSingle(builtChunk, true);
-                    });
-                    rebuildTasks.add(rebuildTask);
-                } else {
-                    backgroundChunkRebuildExecutor.execute(() -> {
-                        rebuildSingle(builtChunk, false);
-                    });
-                }
+            if (isImportant) {
+                Future<?> rebuildTask = importantChunkRebuildExecutor.submit(() -> {
+                    rebuildSingle(renderSection, true);
+                });
+                rebuildTasks.add(rebuildTask);
+            } else {
+                backgroundChunkRebuildExecutor.execute(() -> {
+                    rebuildSingle(renderSection, false);
+                });
             }
         }
 
@@ -223,99 +234,70 @@ public class ChunkProxy {
         rebuildTasks.clear();
     }
 
-    private static void rebuildSingle(ChunkBuilder.BuiltChunk builtChunk, boolean important) {
+    private static void rebuildSingle(RenderSection renderSection, boolean important) {
         try (var scope = scopedBlockBufferAllocatorStorage()) {
-            ChunkRendererRegionBuilder chunkRendererRegionBuilder = new ChunkRendererRegionBuilder();
-            IChunkBuilderBuiltChunkExt builtChunkExt = (IChunkBuilderBuiltChunkExt) builtChunk;
-            ChunkBuilder chunkBuilder = builtChunkExt.radiance$getChunkBuilder();
-            IChunkBuilderExt chunkBuilderExt = (IChunkBuilderExt) chunkBuilder;
-            ChunkRendererRegion
-                chunkRendererRegion =
-                chunkRendererRegionBuilder.build(chunkBuilderExt.radiance$getWorld(),
-                    ChunkSectionPos.from(builtChunk.getSectionPos()));
-
-            if (chunkRendererRegion == null) {
-                invalidateSingle(builtChunk.index);
-                builtChunk.data.set(ChunkBuilder.ChunkData.EMPTY);
+            ClientLevel level = Minecraft.getInstance().level;
+            SectionCompiler sectionCompiler = currentDispatcher == null ? null
+                : ((IChunkBuilderExt) currentDispatcher).radiance$getSectionCompiler();
+            if (level == null || sectionCompiler == null) {
+                invalidateSingle(renderSection.index);
                 return;
             }
 
-            BlockBufferAllocatorStorage storage = blockBufferAllocatorStorageThreadLocal.get();
-            rebuildSingle(chunkRendererRegion, chunkBuilder, chunkBuilderExt, builtChunk, storage,
-                important);
+            RenderSectionRegion
+                region =
+                new RenderRegionCache().createRegion(level, renderSection.getSectionNode());
+
+            if (region == null) {
+                invalidateSingle(renderSection.index);
+                renderSection.sectionMesh.set(CompiledSectionMesh.UNCOMPILED);
+                return;
+            }
+
+            SectionBufferBuilderPack storage = sectionBufferBuilderPackThreadLocal.get();
+            rebuildSingle(region, sectionCompiler, renderSection, storage, important);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
-    private static void rebuildSingle(ChunkRendererRegion chunkRendererRegion,
-        ChunkBuilder chunkBuilder,
-        IChunkBuilderExt chunkBuilderExt,
-        ChunkBuilder.BuiltChunk builtChunk,
-        BlockBufferAllocatorStorage storage,
-        boolean important) {
+    private static void rebuildSingle(RenderSectionRegion region, SectionCompiler sectionCompiler,
+        RenderSection renderSection, SectionBufferBuilderPack storage, boolean important) {
 
-        ChunkSectionPos chunkSectionPos = ChunkSectionPos.from(builtChunk.getOrigin());
+        SectionPos sectionPos = SectionPos.of(renderSection.getSectionNode());
 
-        Vec3d vec3d = chunkBuilder.getCameraPosition();
-        // TODO: cancel out the sort operation in section builder
-        VertexSorter
-            vertexSorter =
-            VertexSorter.byDistance((float) (vec3d.x - builtChunk.getOrigin()
-                    .getX()),
-                (float) (vec3d.y - builtChunk.getOrigin()
-                    .getY()),
-                (float) (vec3d.z - builtChunk.getOrigin()
-                    .getZ()));
+        // The mod sorts translucency in its native backend, so SectionBuilderMixins ignores the
+        // VertexSorting passed to compile(); any value works here.
+        SectionCompiler.Results
+            results =
+            sectionCompiler.compile(sectionPos, region, VertexSorting.byDistance(0.0F, 0.0F, 0.0F),
+                storage);
 
-        SectionBuilder.RenderData renderData =
-            ((IChunkBuilderExt) chunkBuilder).radiance$getSectionBuilder()
-                .build(chunkSectionPos, chunkRendererRegion, vertexSorter, storage);
+        Map<ChunkSectionLayer, MeshData> buffers = results.renderedLayers;
 
-        Map<RenderLayer, BuiltBuffer> buffers = renderData.buffers;
-        builtChunk.setNoCullingBlockEntities(renderData.noCullingBlockEntities);
+        SectionMesh sectionMesh = new SectionMesh() {
+            @Override
+            public boolean facesCanSeeEachother(Direction direction1, Direction direction2) {
+                return results.visibilitySet.visibilityBetween(direction1, direction2);
+            }
+
+            @Override
+            public List<BlockEntity> getRenderableBlockEntities() {
+                return results.blockEntities;
+            }
+
+            @Override
+            public boolean isEmpty(ChunkSectionLayer layer) {
+                return !buffers.containsKey(layer);
+            }
+        };
+        renderSection.sectionMesh.set(sectionMesh);
+        builtChunkNum++;
 
         if (buffers.isEmpty()) {
-            ChunkBuilder.ChunkData chunkData = new ChunkBuilder.ChunkData() {
-                @Override
-                public List<BlockEntity> getBlockEntities() {
-                    return renderData.blockEntities;
-                }
-
-                @Override
-                public boolean isVisibleThrough(Direction from, Direction to) {
-                    return renderData.chunkOcclusionData.isVisibleThrough(from, to);
-                }
-
-                @Override
-                public boolean isEmpty(RenderLayer layer) {
-                    return true;
-                }
-            };
-            builtChunk.data.set(chunkData);
-            builtChunkNum++;
-
-            invalidateSingle(builtChunk.index);
+            invalidateSingle(renderSection.index);
         } else {
-            ChunkBuilder.ChunkData chunkData = new ChunkBuilder.ChunkData() {
-                @Override
-                public List<BlockEntity> getBlockEntities() {
-                    return renderData.blockEntities;
-                }
-
-                @Override
-                public boolean isVisibleThrough(Direction from, Direction to) {
-                    return renderData.chunkOcclusionData.isVisibleThrough(from, to);
-                }
-
-                @Override
-                public boolean isEmpty(RenderLayer layer) {
-                    return layer == null || !buffers.containsKey(layer);
-                }
-            };
-            builtChunk.data.set(chunkData);
-            builtChunkNum++;
-
+            int atlasGlId = blockAtlasGlId();
             ByteBuffer geometryTypeBB = null;
             ByteBuffer geometryGroupNameBB = null;
             ByteBuffer geometryTextureBB = null;
@@ -355,67 +337,49 @@ public class ChunkProxy {
                 long verticesAddr = memAddress(verticesBB);
                 int verticesBaseAddr = 0;
 
-                for (Map.Entry<RenderLayer, BuiltBuffer> entry : buffers.entrySet()) {
-                    RenderLayer renderLayer = entry.getKey();
-                    assert renderLayer.getDrawMode() == QUADS;
+                for (Map.Entry<ChunkSectionLayer, MeshData> entry : buffers.entrySet()) {
+                    ChunkSectionLayer layer = entry.getKey();
+                    MeshData meshData = entry.getValue();
+                    MeshData.DrawState drawState = meshData.drawState();
+                    assert drawState.primitiveTopology() == PrimitiveTopology.QUADS;
 
-                    BuiltBuffer vertexBuffer = entry.getValue();
                     BufferProxy.BufferInfo vertexBufferInfo = BufferProxy.getBufferInfo(
-                        vertexBuffer.getBuffer());
-                    assert vertexBuffer.getDrawParameters()
-                        .indexCount() == vertexBuffer.getDrawParameters()
-                        .vertexCount() / 4 * 6;
-
-                    TextureManager
-                        textureManager =
-                        MinecraftClient.getInstance()
-                            .getTextureManager();
+                        meshData.vertexBuffer());
+                    assert drawState.indexCount() == drawState.vertexCount() / 4 * 6;
 
                     int
                         geometryTypeID =
-                        Constants.GeometryTypes.getGeometryType(renderLayer, true)
+                        Constants.GeometryTypes.getGeometryType(layer.label(), true)
                             .getValue();
-                    int
-                        geometryTextureID =
-                        textureManager.getTexture(
-                                ((RenderLayer.MultiPhase) renderLayer).phases.texture.getId()
-                                    .orElse(MissingSprite.getMissingSpriteId()))
-                            .getGlId();
-                    int vertexFormatID = Constants.VertexFormats.getValue(
-                        vertexBuffer.getDrawParameters()
-                            .format());
+                    int vertexFormatID = Constants.VertexFormats.getValue(drawState.format());
 
                     geometryTypeBB.putInt(geometryTypeBaseAddr, geometryTypeID);
                     geometryTypeBaseAddr += Integer.BYTES;
 
-                    ByteBuffer geometryGroupNameBuffer = MemoryUtil.memUTF8(renderLayer.name, true);
+                    ByteBuffer geometryGroupNameBuffer = MemoryUtil.memUTF8(layer.label(), true);
                     geometryGroupNameBuffers.add(geometryGroupNameBuffer);
                     geometryGroupNameBB.putLong(geometryGroupNameBaseAddr,
                         memAddress(geometryGroupNameBuffer));
                     geometryGroupNameBaseAddr += Long.BYTES;
 
-                    geometryTextureBB.putInt(geometryTextureBaseAddr, geometryTextureID);
+                    geometryTextureBB.putInt(geometryTextureBaseAddr, atlasGlId);
                     geometryTextureBaseAddr += Integer.BYTES;
 
                     vertexFormatBB.putInt(vertexFormatBaseAddr, vertexFormatID);
                     vertexFormatBaseAddr += Integer.BYTES;
 
-                    vertexCountBB.putInt(vertexCountBaseAddr,
-                        vertexBuffer.getDrawParameters()
-                            .vertexCount());
+                    vertexCountBB.putInt(vertexCountBaseAddr, drawState.vertexCount());
                     vertexCountBaseAddr += Integer.BYTES;
 
                     verticesBB.putLong(verticesBaseAddr, vertexBufferInfo.addr());
                     verticesBaseAddr += Long.BYTES;
                 }
 
-                rebuildSingle(builtChunk.getOrigin()
-                        .getX(),
-                    builtChunk.getOrigin()
-                        .getY(),
-                    builtChunk.getOrigin()
-                        .getZ(),
-                    builtChunk.index,
+                BlockPos origin = renderSection.getRenderOrigin();
+                rebuildSingle(origin.getX(),
+                    origin.getY(),
+                    origin.getZ(),
+                    renderSection.index,
                     buffers.size(),
                     geometryTypeAddr,
                     geometryGroupNameAddr,
@@ -449,10 +413,16 @@ public class ChunkProxy {
             }
         }
 
-        for (Map.Entry<RenderLayer, BuiltBuffer> entry : buffers.entrySet()) {
+        for (Map.Entry<ChunkSectionLayer, MeshData> entry : buffers.entrySet()) {
             entry.getValue()
                 .close();
         }
+    }
+
+    private static int blockAtlasGlId() {
+        return ((IAbstractTextureExt) Minecraft.getInstance()
+            .getTextureManager()
+            .getTexture(TextureAtlas.LOCATION_BLOCKS)).radiance$getGlIDUnsafe();
     }
 
     private static native void rebuildSingle(int originX,
@@ -470,8 +440,8 @@ public class ChunkProxy {
 
     public static native boolean isChunkReady(long index);
 
-    public static boolean isChunkReady(ChunkBuilder.BuiltChunk builtChunk) {
-        return isChunkReady(builtChunk.index);
+    public static boolean isChunkReady(RenderSection renderSection) {
+        return isChunkReady(renderSection.index);
     }
 
     public static native void relocateSingle(long index, int originX, int originY, int originZ);
