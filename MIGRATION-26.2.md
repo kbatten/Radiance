@@ -319,7 +319,24 @@ packs the same blob.
 Old note (superseded): "blocked on native code" — that was before reading MCVR; the native side
 is uniform-model-agnostic, so this is a normal (large) Java port like the texture subsystem.
 
+**DRAW-PATH open question (found while implementing — bigger than the uniform mapping).**
+`BufferRendererMixins` intercepted `BufferRenderer.drawWithGlobalProgram(BuiltBuffer)` to feed
+geometry + the uniform blob to native. **26.2 removed `BufferRenderer` entirely** — immediate-mode
+geometry now draws through a `RenderPass` (a `RenderPipeline` binds shader + UBOs and issues the
+draw, e.g. `PreparedRenderType.drawFromBuffer` → `RenderSystem.getDevice().createCommandEncoder()
+.createRenderPass(...).draw*`). So the mod's whole draw-interception model has no direct hook; it
+must move to the `RenderPass`/`CommandEncoder` level (the same layer the texture subsystem already
+hooks for uploads) or `PreparedRenderType.drawFromBuffer`. This is a genuine design question the
+uniform-mapping spec did not cover, and it gates the program-capture/uniform-resolver pieces (which
+have no caller without it). **Source-capture is DONE** (`GlDeviceMixins` + `CompiledShaderMixins`);
+the draw-path design is the next open item.
+
 **Confirmed 26.2 hook points (from reading `GlDevice`/`GlProgram`/`ShaderProxy`):**
+- **Program capture** (clean): hook `GlProgram.link(vs, fs, pipeline.getVertexFormatBindings(),
+  pipeline.getLocation().toString())` or `GlDevice.compileProgram(RenderPipeline, ShaderSource)`;
+  name = `pipeline.getLocation()`, vertex format = `pipeline.getVertexFormatBindings()`, sources
+  from the captured `GlShaderModule`s (`ICompiledShaderExt`). `IShaderProgramExt` moves onto the
+  (public) `GlProgram`. `GlProgram` is public; `GlDevice` is package-private (target by name).
 - **Source capture** → `@Mixin(GlDevice)` hooking `getOrCompileShader(Identifier id, ShaderType
   type, ShaderDefines defines, ShaderSource shaderSource)` (protected, all-public params) —
   **not** the private `compileShader(ShaderCompilationKey, ShaderSource)` whose `ShaderCompilationKey`
