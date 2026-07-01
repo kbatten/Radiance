@@ -599,6 +599,17 @@ shader/render-pipeline subsystem.
     `CommandEncoder.writeToTexture(GpuTexture, NativeImage, …)` — i.e. exactly the path the
     **texture subsystem already tracks** (`TextureUtilMixins` import + `CommandEncoderMixins`
     upload mirror). So all 8 font files were deleted, like the `targetID`-stamping mixins.
+  - **Render-type / phase — RETIRED (obsolete in 26.2).** The four mixins
+    (`RenderPhaseMixins` + `RenderPhaseLightmapMixins`/`RenderPhaseTargetMixins` +
+    `RenderLayerMixins`) neutralized `RenderPhase`'s GL begin/end actions (target switch, lightmap
+    enable) since the mod renders via Vulkan, and rebuilt the LIGHTNING layer. `RenderPhase` is
+    **entirely removed** in 26.2 (no begin/end-action system — GL state is declarative in
+    `RenderPipeline` + render passes), so the neutralization is moot (superseded by the mod's
+    GpuDevice/CommandEncoder-level interception). The LIGHTNING rebuild used the removed
+    `RenderLayer.of`/`MultiPhaseParameters`/`RenderPhase.Texture` API (26.2 builds it via
+    `RenderType.create`/`RenderSetup`/`RenderPipeline`); if lightning visuals need the mod's
+    textured variant, reimplement it with the weather/entity render path, not here. No mod code
+    referenced the setters/LIGHTNING, so all 4 were deleted.
   - **Atlas sources** (`Directory`/`Single`/`Unstitch`/`PalettedPermutations`):
     `AtlasSource.SpriteRegions` **removed** → `SpriteSource.run(ResourceManager, Output)`.
   - **`VideoOptionsScreenMixins`** — built on the `SimpleOption` API
