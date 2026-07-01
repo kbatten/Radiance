@@ -1,38 +1,39 @@
 package com.radiance.client.constant;
 
+import com.mojang.blaze3d.IndexType;
+import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import com.radiance.client.vertex.PBRVertexFormats;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.stream.Collectors;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.RenderPhase;
-import net.minecraft.client.render.VertexFormat;
 
 public class Constants {
 
     public enum IndexTypes {
-        SHORT(VertexFormat.IndexType.SHORT, 0),
-        INT(VertexFormat.IndexType.INT, 1);
+        SHORT(IndexType.SHORT, 0),
+        INT(IndexType.INT, 1);
 
-        private static final Map<VertexFormat.IndexType, Integer>
+        private static final Map<IndexType, Integer>
             BY_INDEX_TYPE =
             Collections.unmodifiableMap(Arrays.stream(values())
                 .collect(Collectors.toMap(IndexTypes::getIndexType, IndexTypes::getValue)));
 
-        private final VertexFormat.IndexType indexType;
+        private final IndexType indexType;
         private final int value;
 
-        IndexTypes(VertexFormat.IndexType indexType, int value) {
+        IndexTypes(IndexType indexType, int value) {
             this.indexType = indexType;
             this.value = value;
         }
 
-        public static int getValue(VertexFormat.IndexType indexType) {
+        public static int getValue(IndexType indexType) {
             return BY_INDEX_TYPE.get(indexType);
         }
 
-        public VertexFormat.IndexType getIndexType() {
+        public IndexType getIndexType() {
             return indexType;
         }
 
@@ -41,34 +42,37 @@ public class Constants {
         }
     }
 
+    // 26.2: VertexFormat.DrawMode -> com.mojang.blaze3d.PrimitiveTopology. PrimitiveTopology has
+    // no LINE_STRIP (it was replaced by POINTS), so the old LINE_STRIP entry is dropped; the mod
+    // only ever emits QUADS geometry to the native backend, and the remaining native draw-mode
+    // ids are kept stable.
     public enum DrawModes {
-        LINES(VertexFormat.DrawMode.LINES, 0),
-        LINE_STRIP(VertexFormat.DrawMode.LINE_STRIP, 1),
-        DEBUG_LINES(VertexFormat.DrawMode.DEBUG_LINES, 2),
-        DEBUG_LINE_STRIP(VertexFormat.DrawMode.DEBUG_LINE_STRIP, 3),
-        TRIANGLES(VertexFormat.DrawMode.TRIANGLES, 4),
-        TRIANGLE_STRIP(VertexFormat.DrawMode.TRIANGLE_STRIP, 5),
-        TRIANGLE_FAN(VertexFormat.DrawMode.TRIANGLE_FAN, 6),
-        QUADS(VertexFormat.DrawMode.QUADS, 7);
+        LINES(PrimitiveTopology.LINES, 0),
+        DEBUG_LINES(PrimitiveTopology.DEBUG_LINES, 2),
+        DEBUG_LINE_STRIP(PrimitiveTopology.DEBUG_LINE_STRIP, 3),
+        TRIANGLES(PrimitiveTopology.TRIANGLES, 4),
+        TRIANGLE_STRIP(PrimitiveTopology.TRIANGLE_STRIP, 5),
+        TRIANGLE_FAN(PrimitiveTopology.TRIANGLE_FAN, 6),
+        QUADS(PrimitiveTopology.QUADS, 7);
 
-        private static final Map<VertexFormat.DrawMode, Integer>
+        private static final Map<PrimitiveTopology, Integer>
             BY_DRAW_MODE =
             Collections.unmodifiableMap(Arrays.stream(values())
                 .collect(Collectors.toMap(DrawModes::getDrawMode, DrawModes::getValue)));
 
-        private final VertexFormat.DrawMode drawMode;
+        private final PrimitiveTopology drawMode;
         private final int value;
 
-        DrawModes(VertexFormat.DrawMode drawMode, int value) {
+        DrawModes(PrimitiveTopology drawMode, int value) {
             this.drawMode = drawMode;
             this.value = value;
         }
 
-        public static int getValue(VertexFormat.DrawMode drawMode) {
+        public static int getValue(PrimitiveTopology drawMode) {
             return BY_DRAW_MODE.get(drawMode);
         }
 
-        public VertexFormat.DrawMode getDrawMode() {
+        public PrimitiveTopology getDrawMode() {
             return drawMode;
         }
 
@@ -77,26 +81,25 @@ public class Constants {
         }
     }
 
+    // 26.2: net.minecraft.client.render.VertexFormats -> com.mojang.blaze3d.vertex.
+    // DefaultVertexFormat (Yarn->Mojang name map). The non-PBR entries feed the entity/particle
+    // paths (not yet migrated); only PBR_TRIANGLE is used by the chunk pipeline. A couple of Yarn
+    // formats have no exact 26.2 attribute-order match and are mapped to the closest distinct
+    // format as placeholders (flagged inline) -- to be revisited with the entity/particle work.
     public enum VertexFormats {
-        POSITION_COLOR_TEXTURE_LIGHT_NORMAL(
-            net.minecraft.client.render.VertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL, 0),
-        POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL(
-            net.minecraft.client.render.VertexFormats.POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL,
-            1),
-        POSITION_TEXTURE_COLOR_LIGHT(
-            net.minecraft.client.render.VertexFormats.POSITION_TEXTURE_COLOR_LIGHT, 2),
-        POSITION(net.minecraft.client.render.VertexFormats.POSITION, 3),
-        POSITION_COLOR(net.minecraft.client.render.VertexFormats.POSITION_COLOR, 4),
-        LINES(net.minecraft.client.render.VertexFormats.LINES, 5),
-        POSITION_COLOR_LIGHT(net.minecraft.client.render.VertexFormats.POSITION_COLOR_LIGHT, 6),
-        POSITION_TEXTURE(net.minecraft.client.render.VertexFormats.POSITION_TEXTURE, 7),
-        POSITION_TEXTURE_COLOR(net.minecraft.client.render.VertexFormats.POSITION_TEXTURE_COLOR, 8),
-        POSITION_COLOR_TEXTURE_LIGHT(
-            net.minecraft.client.render.VertexFormats.POSITION_COLOR_TEXTURE_LIGHT, 9),
-        POSITION_TEXTURE_LIGHT_COLOR(
-            net.minecraft.client.render.VertexFormats.POSITION_TEXTURE_LIGHT_COLOR, 10),
-        POSITION_TEXTURE_COLOR_NORMAL(
-            net.minecraft.client.render.VertexFormats.POSITION_TEXTURE_COLOR_NORMAL, 11),
+        POSITION_COLOR_TEXTURE_LIGHT_NORMAL(DefaultVertexFormat.BLOCK, 0),
+        POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL(DefaultVertexFormat.ENTITY, 1),
+        // No exact 26.2 pos,tex,color,light format; placeholder pending entity/particle migration.
+        POSITION_TEXTURE_COLOR_LIGHT(DefaultVertexFormat.PARTICLE, 2),
+        POSITION(DefaultVertexFormat.POSITION, 3),
+        POSITION_COLOR(DefaultVertexFormat.POSITION_COLOR, 4),
+        LINES(DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, 5),
+        POSITION_COLOR_LIGHT(DefaultVertexFormat.POSITION_COLOR_LIGHTMAP, 6),
+        POSITION_TEXTURE(DefaultVertexFormat.POSITION_TEX, 7),
+        POSITION_TEXTURE_COLOR(DefaultVertexFormat.POSITION_TEX_COLOR, 8),
+        POSITION_COLOR_TEXTURE_LIGHT(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, 9),
+        POSITION_TEXTURE_LIGHT_COLOR(DefaultVertexFormat.POSITION_TEX_LIGHTMAP_COLOR, 10),
+        POSITION_TEXTURE_COLOR_NORMAL(DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL, 11),
         PBR_TRIANGLE(PBRVertexFormats.PBR_TRIANGLE, 12);
 
         private static final Map<VertexFormat, Integer>
@@ -142,17 +145,22 @@ public class Constants {
             this.value = value;
         }
 
-        public static GeometryTypes getGeometryType(RenderLayer renderLayer, boolean reflect) {
+        // 26.2: keyed on the render layer's name rather than the removed RenderLayer/RenderPhase
+        // types (the caller supplies the name -- ChunkSectionLayer.label() for terrain, the
+        // RenderType name otherwise). The old RenderPhase.*_TRANSPARENCY switch was dead code:
+        // every translucent branch (and the cutout fall-through) returned WORLD_TRANSPARENT, so
+        // the classifier reduces to name checks + a "solid" test gated on the reflect flag.
+        public static GeometryTypes getGeometryType(String name, boolean reflect) {
             // single objects
-            if (renderLayer.name.contains("water_mask")) {
+            if (name.contains("water_mask")) {
                 return BOAT_WATER_MASK;
-            } else if (renderLayer.name.contains("end_portal")) {
+            } else if (name.contains("end_portal")) {
                 return END_PORTAL;
-            } else if (renderLayer.name.contains("end_gateway")) {
+            } else if (name.contains("end_gateway")) {
                 return END_GATEWAY;
             }
 
-            if (renderLayer.name.contains("cloud")) {
+            if (name.contains("cloud")) {
                 return WORLD_CLOUD;
             }
 
@@ -160,40 +168,12 @@ public class Constants {
                 return WORLD_NO_REFLECT;
             }
 
-            RenderLayer.MultiPhase multiPhase = (RenderLayer.MultiPhase) renderLayer;
-            if (multiPhase.name.contains("solid")) {
-                // solid
+            if (name.contains("solid")) {
                 return WORLD_SOLID;
             }
 
-            if (multiPhase.isTranslucent()) {
-                // transparent
-                if (RenderPhase.NO_TRANSPARENCY.equals(multiPhase.phases.transparency)) {
-                    return WORLD_TRANSPARENT;
-                } else if (RenderPhase.ADDITIVE_TRANSPARENCY.equals(
-                    multiPhase.phases.transparency)) {
-                    return WORLD_TRANSPARENT;
-                } else if (RenderPhase.LIGHTNING_TRANSPARENCY.equals(
-                    multiPhase.phases.transparency)) {
-                    return WORLD_TRANSPARENT;
-                } else if (RenderPhase.GLINT_TRANSPARENCY.equals(multiPhase.phases.transparency)) {
-                    return WORLD_TRANSPARENT;
-                } else if (RenderPhase.CRUMBLING_TRANSPARENCY.equals(
-                    multiPhase.phases.transparency)) {
-                    return WORLD_TRANSPARENT;
-                } else if (RenderPhase.OVERLAY_TRANSPARENCY.equals(
-                    multiPhase.phases.transparency)) {
-                    return WORLD_TRANSPARENT;
-                } else if (RenderPhase.TRANSLUCENT_TRANSPARENCY.equals(
-                    multiPhase.phases.transparency)) {
-                    return WORLD_TRANSPARENT;
-                } else {
-                    throw new IllegalArgumentException("Invalid render layer " + multiPhase);
-                }
-            } else {
-                // cut out
-                return WORLD_TRANSPARENT;
-            }
+            // translucent + cutout both map to WORLD_TRANSPARENT
+            return WORLD_TRANSPARENT;
         }
 
         public int getValue() {

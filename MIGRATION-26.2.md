@@ -446,6 +446,29 @@ only as the classes they reference are confirmed to survive.
 - `mixins/vanilla_resource_tracker/{NativeImageMixins}` + `mixins/vulkan_render_integration/{NativeImageMixins}` + `client/texture/{AuxiliaryTextures,AuxiliaryTextureReloader}` — the PBR auxiliary-texture path
 - `mixins/vulkan_render_integration/{ScreenshotRecorderMixins}` + `client/proxy/vulkan/RendererProxy` — screenshot readback
 - `client/vertex/{PBRVertexFormatElements,PBRVertexFormats}` — vertex-format foundation (see Vertex path below)
+- `client/vertex/PBRVertexConsumer` — the vertex-consumer keystone (see Vertex path below)
+- `client/constant/Constants` — the enum→native-id mapping layer (see Chunk-rebuild cluster below)
+
+## Chunk-rebuild cluster (26.2 architecture map)
+
+`ChunkProxy` reimplements MC's chunk-rebuild loop (its own executors + queue) and drives MC's
+section builder to extract per-layer geometry for the native backend. The whole 1.21.4 chunk
+machinery it sits on was replaced, so `ChunkProxy` + `SectionBuilderMixins` +
+`IChunkBuilder{,BuiltChunk}Ext` + `ChunkBuilder{,BuiltChunk}Mixins` + `BuiltChunkStorageMixins` +
+`BuiltBufferMixins` form **one interlocked cluster** — none compiles until the set is migrated
+together. Foundations now done: the **vertex-consumer keystone** and **`Constants`**. Target map:
+
+| 1.21.4 | 26.2 |
+| --- | --- |
+| `ChunkBuilder` | `renderer.chunk.SectionRenderDispatcher` |
+| `ChunkBuilder.BuiltChunk` | `SectionRenderDispatcher.RenderSection` (`index`; `data`→`sectionMesh` `AtomicReference<SectionMesh>`; `getOrigin`→`getRenderOrigin`; `getSectionPos`/origin→`getSectionNode` packed long; `reset`/`resortTransparency`) |
+| `ChunkBuilder.ChunkData` / `.EMPTY` | `renderer.chunk.SectionMesh` / `CompiledSectionMesh.UNCOMPILED` |
+| `SectionBuilder` / `.RenderData` | `renderer.chunk.SectionCompiler` / `SectionCompiler.Results` (`buffers`→`renderedLayers` `Map<ChunkSectionLayer,MeshData>`; `chunkOcclusionData`→`visibilitySet` `VisibilitySet`; `blockEntities`) |
+| `BuiltChunkStorage` (`.chunks`) | sections live in `SectionRenderDispatcher` via `RotatingSectionStorage` |
+| `ChunkRendererRegion` / `…Builder` | `renderer.chunk.RenderSectionRegion` / `RenderRegionCache` |
+| `BlockBufferAllocatorStorage` | `renderer.SectionBufferBuilderPack` |
+| chunk `RenderLayer`s | `renderer.chunk.ChunkSectionLayer` enum (only `SOLID`/`CUTOUT`/`TRANSLUCENT`; `.label()`, `.byTransparency`) |
+| `RenderLayer.MultiPhase.phases.texture` | terrain texture is always the block atlas; per-`RenderType` texture lives behind package-private `RenderSetup.textures`/`TextureBinding` |
 
 ## Vertex path (partial)
 
