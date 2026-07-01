@@ -267,6 +267,38 @@ setTargetID` is kept for now: `AuxiliaryTextures` and the deferred glyph/overlay
 mixins still set it; it becomes vestigial once those move to the
 `CommandEncoder.writeToTexture` hook too.)
 
+## Shader / render-pipeline subsystem (blocked on native code)
+
+The mod **virtualizes** MC's GL shader pipeline: `CompiledShaderMixins`/`ShaderProgramMixins`
+intercept `CompiledShader.compile` and `ShaderProgram.create`/`set` to build GL-less "virtual"
+objects that carry the **GLSL source** + per-uniform/sampler/format metadata, which its native
+Vulkan `core` then translates to SPIR-V (`ShaderRegistry`/`ShaderProxy`/`ShaderTranslator`).
+
+26.2 replaced that entire system:
+- `CompiledShader`→`com.mojang.blaze3d.opengl.GlShaderModule` (compiled via
+  `GlDevice.getOrCompileShader(Identifier, ShaderType, ShaderDefines, ShaderSource)`).
+- `ShaderProgram`→`GlProgram` (`GlProgram.link(vertex, fragment, VertexFormat[], label)`) inside
+  a `RenderPipeline` (`GpuDevice.precompilePipeline(RenderPipeline, ShaderSource)`).
+- **Uniforms are now UBO blocks** (`Projection`/`Lighting`/`Fog`/`Globals`, see
+  `GlProgram.BUILT_IN_UNIFORMS`) — not individual `GlUniform`s. `GlUniformMixins`/the mod's
+  per-uniform fields (`modelViewMat`, `projectionMat`, …) map onto the old individual-uniform
+  model, which no longer exists.
+
+**This is the crux and it is blocked**, for two reasons:
+1. The **UBO uniform-model change** alters the Java→native data contract (the backend receives
+   uniform *blocks*, not individual `GlUniform` buffers).
+2. The **native Vulkan `core` (C++/JNI) is not in this repository** (`src/main/native` absent;
+   `libcore.so`/`core.dll` are gitignored binaries). That is where the captured GLSL/uniform data
+   is consumed and translated to SPIR-V, so the Java capture cannot be re-architected to the UBO
+   model without the native side + a coordinated contract redesign.
+
+Re-architecting the Java capture would mean re-hooking `GlDevice.getOrCompileShader` (source),
+`GlProgram.link`/`GlDevice.compilePipeline` (program), and re-expressing uniforms as UBO blocks —
+but the shape of what to hand the native backend is a native-side decision. **Done here:**
+`ShaderTranslator` (`VertexFormat.getAttributeNames()`→`getElements().map(name)`), which is pure
+GLSL/format string work. The capture mixins, `ShaderRegistry`, `ShaderProxy`, and the
+`I{ShaderProgram,GlUniform,CompiledShader}Ext` interfaces remain blocked as above.
+
 ## Access widener
 
 The original 40+ entries are Yarn-named and many target now-deleted classes

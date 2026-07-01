@@ -6,7 +6,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import net.minecraft.client.render.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormatElement;
 
 public final class ShaderTranslator {
 
@@ -31,7 +32,9 @@ public final class ShaderTranslator {
             .collect(java.util.stream.Collectors.toSet());
 
         LinkedHashMap<String, Integer> attributeLocations = new LinkedHashMap<>();
-        List<String> attributeNames = vertexFormat.getAttributeNames();
+        // 26.2: VertexFormat.getAttributeNames() removed; derive names from the elements.
+        List<String> attributeNames = vertexFormat.getElements().stream()
+            .map(VertexFormatElement::name).toList();
         for (int i = 0; i < attributeNames.size(); i++) {
             attributeLocations.put(attributeNames.get(i), i);
         }
