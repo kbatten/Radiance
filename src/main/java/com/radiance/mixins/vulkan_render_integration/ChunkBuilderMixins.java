@@ -1,40 +1,21 @@
 package com.radiance.mixins.vulkan_render_integration;
 
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IChunkBuilderExt;
-import net.minecraft.client.render.chunk.BlockBufferAllocatorStorage;
-import net.minecraft.client.render.chunk.ChunkBuilder;
-import net.minecraft.client.render.chunk.SectionBuilder;
-import net.minecraft.client.world.ClientWorld;
-import org.spongepowered.asm.mixin.Final;
+import net.minecraft.client.renderer.chunk.SectionCompiler;
+import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 
-@Mixin(ChunkBuilder.class)
+// 26.2: ChunkBuilder -> SectionRenderDispatcher; the shadowed section builder/world/buffers
+// collapse to the dispatcher's SectionCompiler (set via setCompiler, hence non-final/volatile).
+@Mixin(SectionRenderDispatcher.class)
 public class ChunkBuilderMixins implements IChunkBuilderExt {
 
-    @Final
     @Shadow
-    SectionBuilder sectionBuilder;
-
-    @Final
-    @Shadow
-    BlockBufferAllocatorStorage buffers;
-
-    @Shadow
-    ClientWorld world;
+    volatile SectionCompiler sectionCompiler;
 
     @Override
-    public SectionBuilder radiance$getSectionBuilder() {
-        return sectionBuilder;
-    }
-
-    @Override
-    public ClientWorld radiance$getWorld() {
-        return world;
-    }
-
-    @Override
-    public BlockBufferAllocatorStorage radiance$getBuffers() {
-        return buffers;
+    public SectionCompiler radiance$getSectionCompiler() {
+        return sectionCompiler;
     }
 }
