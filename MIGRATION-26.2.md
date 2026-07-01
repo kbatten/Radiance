@@ -319,17 +319,38 @@ packs the same blob.
 Old note (superseded): "blocked on native code" — that was before reading MCVR; the native side
 is uniform-model-agnostic, so this is a normal (large) Java port like the texture subsystem.
 
-**DRAW-PATH open question (found while implementing — bigger than the uniform mapping).**
-`BufferRendererMixins` intercepted `BufferRenderer.drawWithGlobalProgram(BuiltBuffer)` to feed
-geometry + the uniform blob to native. **26.2 removed `BufferRenderer` entirely** — immediate-mode
-geometry now draws through a `RenderPass` (a `RenderPipeline` binds shader + UBOs and issues the
-draw, e.g. `PreparedRenderType.drawFromBuffer` → `RenderSystem.getDevice().createCommandEncoder()
-.createRenderPass(...).draw*`). So the mod's whole draw-interception model has no direct hook; it
-must move to the `RenderPass`/`CommandEncoder` level (the same layer the texture subsystem already
-hooks for uploads) or `PreparedRenderType.drawFromBuffer`. This is a genuine design question the
-uniform-mapping spec did not cover, and it gates the program-capture/uniform-resolver pieces (which
-have no caller without it). **Source-capture is DONE** (`GlDeviceMixins` + `CompiledShaderMixins`);
-the draw-path design is the next open item.
+**DRAW-PATH design — RESOLVED (investigated).** `BufferRendererMixins` intercepted
+`BufferRenderer.drawWithGlobalProgram(BuiltBuffer)`. **26.2 removed `BufferRenderer`**; immediate-mode
+geometry now draws through **`com.mojang.blaze3d.systems.RenderPass`** — a concrete, mixin-able class
+that wraps a per-backend `RenderPassBackend` (so a `@Mixin(RenderPass)` catches every draw regardless
+of GL/Vulkan backend). `RenderPass` is the **universal draw choke point**: `setPipeline(RenderPipeline)`,
+`setVertexBuffer(slot, GpuBufferSlice)`, `setIndexBuffer(GpuBuffer, IndexType)`,
+`setUniform(String name, GpuBufferSlice)`, `bindTexture(String name, GpuTextureView, GpuSampler)`, then
+`drawIndexed(indexCount, instanceCount, firstIndex, vertexOffset, firstInstance)`
+(`PreparedRenderType.drawFromBuffer` → `renderPass.drawIndexed(...)`).
+
+New draw interception (`RenderPassMixins`, replaces `BufferRendererMixins`):
+- capture per-draw state on the hooked `RenderPass` — current pipeline (→ shader), vertex/index
+  buffers, bound UBO slices by name, bound sampler textures by name;
+- at `drawIndexed`, resolve the shader from the pipeline (`GlRenderPipeline(RenderPipeline, GlProgram)`;
+  or `RenderPipeline.getLocation()` → `ShaderRegistry`), pack the uniform blob, feed geometry + uniforms
+  + textures to native, and cancel the GL draw.
+
+**This revises (and simplifies) the uniform mapping.** The five built-in UBOs are all bound via
+`RenderPass.setUniform(name, slice)`: `"Projection"` (ProjMat), `"Fog"`, `"Globals"`
+(ScreenSize/GameTime/GlintAlpha/…), `"Lighting"` (Light0/1_Direction) — bound by `RenderSystem` at
+pass start — and `"DynamicTransforms"` (ModelViewMat/ColorModulator/ModelOffset/TextureMat) — bound
+per-draw by `PreparedRenderType.drawFromBuffer`. So instead of reconstructing values from scattered
+`RenderSystem` accessors + 3 separate capture hooks, capture the **actual UBO bytes**: hook
+`CommandEncoder.writeToBuffer(GpuBufferSlice, ByteBuffer)` (same pattern as the texture subsystem's
+`writeToTexture`) to record each UBO's CPU data keyed by slice; then each `ShaderField.name` maps to
+`(UBO block name, std140 offset)` — read the value from the captured bytes at draw time and write it
+at `field.offset()`. More accurate (real values) and consistent with the existing CommandEncoder-hook
+architecture. **Source-capture is DONE** (`GlDeviceMixins` + `CompiledShaderMixins`); the remaining
+build order is: `RenderPassMixins` + `CommandEncoder.writeToBuffer` capture → program-capture on
+`GlProgram` (`IShaderProgramExt`) → the field→UBO resolver in `ShaderProxy.createUniform` → retire
+`GlUniformMixins`/`IGlUniformExt` → adapt `ShaderRegistry`/`ShaderProgramMixins`; delete
+`BufferRendererMixins`.
 
 **Confirmed 26.2 hook points (from reading `GlDevice`/`GlProgram`/`ShaderProxy`):**
 - **Program capture** (clean): hook `GlProgram.link(vs, fs, pipeline.getVertexFormatBindings(),
