@@ -485,8 +485,15 @@ shader/render-pipeline subsystem.
     `ReloadableTexture`, `Sprite*`, `NativeImage`, `MipmapHelper`): the mod hooks
     `AbstractTexture.getGlId()`/`bindTexture()` and `NativeImage.upload(...)`, all
     **removed** — textures are now `GpuTexture`/`GpuTextureView` via `GpuDevice`.
-  - **Font** (`BitmapFontGlyph`, `BuiltinEmptyGlyph`, `FontStorage`, `TtfGlyph`):
-    glyph/atlas system rebuilt (`FontSet`/`FontTexture`/`glyphs.*`).
+  - **Font / glyph — RETIRED (obsolete in 26.2).** The mod's glyph mixins
+    (`FontStorage`/`GlyphAtlasTexture`/`BuiltinEmptyGlyph`/`BitmapFontGlyph`/`TtfGlyph`/
+    `UnicodeTextureGlyph` + `IGlyphAtlasTextureExt`/`IRenderableGlyphExt`) intercepted the
+    old GL glyph-upload (`bindTexture`/`getGlId`/`NativeImage.upload`, target-id stamping).
+    In 26.2 `FontTexture extends AbstractTexture`: the glyph atlas is a normal `GpuTexture`
+    created via `GpuDevice.createTexture` and glyphs upload via
+    `CommandEncoder.writeToTexture(GpuTexture, NativeImage, …)` — i.e. exactly the path the
+    **texture subsystem already tracks** (`TextureUtilMixins` import + `CommandEncoderMixins`
+    upload mirror). So all 8 font files were deleted, like the `targetID`-stamping mixins.
   - **Atlas sources** (`Directory`/`Single`/`Unstitch`/`PalettedPermutations`):
     `AtlasSource.SpriteRegions` **removed** → `SpriteSource.run(ResourceManager, Output)`.
   - **`VideoOptionsScreenMixins`** — built on the `SimpleOption` API
