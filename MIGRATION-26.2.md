@@ -370,6 +370,37 @@ functional/version changes needed**, because MCVR is decoupled from MC specifics
 Bottom line: the existing MCVR binary should work with a Java-only 26.2 port as long as the
 `native` signatures stay identical; MCVR only needs a rebuild (not a rewrite) if they change.
 
+## GUI / options cluster
+
+26.2 rewrote the GUI to a **render-state extraction** model: screens override
+`extractRenderState(GuiGraphicsExtractor, mouseX, mouseY, delta)` (not `render(DrawContext,…)`);
+`GuiGraphicsExtractor` is the new immediate-mode-ish context (`text(font, c, x, y, color, true)`
+for `drawTextWithShadow`, `centeredText`, `blit(RenderPipeline, Identifier, …)` for `drawTexture`,
+`setTooltipForNextFrame`, `pose()` returns a **2D** `Matrix3x2fStack`). Widgets renamed
+(`ButtonWidget`→`Button`/`.dimensions`→`.bounds`, `ClickableWidget`→`AbstractWidget`,
+`TextFieldWidget`→`EditBox`:`setText`→`setValue`/`setChangedListener`→`setResponder`/`getText`→
+`getValue`/`setTextPredicate` removed, `SliderWidget`→`AbstractSliderButton`,
+`AlwaysSelectedEntryListWidget`→`ObjectSelectionList` with `Entry.extractContent(...)` +
+`getContentX/Y/Width/Height`). Input events refactored:
+`mouseClicked/Dragged/Released(double,double,int,…)` → `mouse*(MouseButtonEvent event, …)` with
+`event.x()/y()/button()`. Misc: `TextRenderer`→`Font`, `addDrawableChild`→`addRenderableWidget`,
+`close()`→`onClose()`, `Minecraft.setScreen`→`Minecraft.gui.setScreen`, `Text`→`Component`,
+`Formatting`→`ChatFormatting` (`Style.withFormatting`→`applyLegacyFormat`).
+
+**Done (recipe):** `ShaderPackSettingsScreen`, `ModuleAttributeScreen`, `AttributeWidgetUtil`,
+`ShaderPackScreen` (list widget + input events + legacy formatting).
+
+**Pure-GUI remainder (OptionInstance rewrite):** `PotentialValuesBasedCallbacksNoValue`,
+`VideoOptionsScreenMixins`, `CategoryVideoOptionEntry` — `SimpleOption`→`OptionInstance`
+(`CyclingCallbacks`→`ValueSet`, `CycleButton`).
+
+**Actually render-coupled (not pure-GUI):** `RenderPipelineScreen` (calls
+`IDrawContextExt.radiance$drawOrientedQuad` — the deferred `DrawContextMixins` `VertexConsumer`
+path — plus `Screen.renderables` is now private and its manual *scaled-canvas* rendering /
+child `mouseClicked` calls need rework), `DrawContextMixins` (shadows `DrawContext`'s 3D
+`PoseStack`/`VertexConsumerProvider`, gone from `GuiGraphicsExtractor`), `ScreenMixins`
+(`applyBlur`/`Framebuffer` redirect). These belong with the render subsystems.
+
 ## Access widener
 
 The original 40+ entries are Yarn-named and many target now-deleted classes
