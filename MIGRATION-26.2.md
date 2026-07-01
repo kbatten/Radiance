@@ -280,19 +280,44 @@ raw ids/pointers/packed bytes, not MC types.
 | **`BufferProxy`** (vertex/index buffers, world/sky/overlay uniforms) | `queueUpload(ptr,id)`, `initializeBuffer(id,size,usage)`, `updateWorldUniform(ptr)` … all primitives/pointers | ✅ preserved → **portable (moderate)**: re-extract from `MeshData` (`getBuffer`→`vertexBuffer`, `DrawParameters`→`DrawState`, `DrawMode`→`PrimitiveTopology`, `getVertexSizeByte`→`getVertexSize`) + matrices/`Camera`/`Fog`; drop/re-map `RenderPhase.setupGlintTexturing` |
 | **`ChunkProxy`** | `initNative`, `rebuildSingle`, `isChunkReady`, `relocateSingle` … pure primitives | ✅ contract preserved, but the *extraction* drives MC's **rewritten** chunk builder (`ChunkBuilder`/`SectionBuilder`/`ChunkRendererRegion` → `SectionRenderDispatcher`/`SectionCompiler`) → **portable but heavy** |
 | **`EntityProxy`** | `queueBuild(...)`, `build()` | ✅ contract preserved, but the *extraction* uses the **rewritten** `VertexConsumer` API + `VertexConsumerProvider`→`MultiBufferSource` + entity dispatch → **portable but heavy** |
-| **Shaders** | uniform data model | ❌ **contract changed** (individual `GlUniform` → UBO blocks) *and* native code absent → **blocked** (below) |
+| **Shaders** | opaque uniform **blob** (`draw(…, uniformPtr, uniformSize)`) + shader file paths | ✅ **preserved → portable** (see below; the native side is uniform-model-agnostic) |
 
-So the geometry/vertex path is **not** native-blocked — it can be ported from Java once the
-underlying MC-subsystem rewrites (vertex consumers, chunk rendering) are done. Only the shader
-subsystem is truly blocked. Note: even a fully-ported Java side still needs the native `core`
-rebuilt for shaders to render.
+**None of the render subsystems are native-blocked.** After reading the native source (MCVR,
+`../MCVR`), every JNI contract is a raw ids/pointers/**opaque byte-blob** interface, independent
+of MC's types. So the whole mod is portable from the Java side against the *existing* native
+`core`; each subsystem is just coupled to the corresponding MC-subsystem rewrite (vertex
+consumers, chunk rendering, shader capture).
 
-## Shader / render-pipeline subsystem (blocked on native code)
+## Shader / render-pipeline subsystem (portable — native contract is model-agnostic)
 
 The mod **virtualizes** MC's GL shader pipeline: `CompiledShaderMixins`/`ShaderProgramMixins`
 intercept `CompiledShader.compile` and `ShaderProgram.create`/`set` to build GL-less "virtual"
 objects that carry the **GLSL source** + per-uniform/sampler/format metadata, which its native
 Vulkan `core` then translates to SPIR-V (`ShaderRegistry`/`ShaderProxy`/`ShaderTranslator`).
+
+**Native contract (from MCVR `com_radiance_client_proxy_vulkan_ShaderProxy.cpp`):**
+`registerShader(shaderKey, vertexFormatType, drawMode, uniformSize, vertexShaderPath,
+fragmentShaderPath, defines[])` — shader **file paths** + a **total uniform byte-size**; and
+`draw(vertexId, indexId, shaderId, indexCount, indexType, uniformPtr, uniformSize)` — an
+**opaque uniform blob** that native just `memcpy`s into a UBO. The blob's layout is defined by
+the mod's own `ShaderDefinition` (`ShaderProxy.createUniform` writes each `ShaderField` at its
+offset); native never sees individual uniforms. **So MC's individual-`GlUniform`→UBO change does
+not touch the native contract** — the Java side just reads the values from a different place and
+packs the same blob.
+
+**Remaining Java-side re-architecture (portable):**
+- Re-capture GLSL **source** at `GlDevice.getOrCompileShader`/`GlShaderModule`/`ShaderSource`
+  (was `CompiledShader.compile`).
+- Re-capture **program** creation at `GlProgram.link`/`GpuDevice.precompilePipeline`
+  (was `ShaderProgram.create`/`set`).
+- Read uniform **values** from 26.2 sources — `RenderSystem.getModelViewMatrixCopy()` (direct
+  `Matrix4f`), `getProjectionMatrixBuffer()`/`getDynamicUniforms()`/the fog UBO (std140
+  `GpuBufferSlice`s) — instead of individual `GlUniform.floatData`, packing into the mod's
+  `ShaderDefinition` layout in `ShaderProxy.createUniform`.
+- `ShaderTranslator` (done) already emits the mod's Vulkan GLSL from the captured source/fields.
+
+Old note (superseded): "blocked on native code" — that was before reading MCVR; the native side
+is uniform-model-agnostic, so this is a normal (large) Java port like the texture subsystem.
 
 26.2 replaced that entire system:
 - `CompiledShader`→`com.mojang.blaze3d.opengl.GlShaderModule` (compiled via
