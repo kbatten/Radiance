@@ -344,6 +344,32 @@ but the shape of what to hand the native backend is a native-side decision. **Do
 GLSL/format string work. The capture mixins, `ShaderRegistry`, `ShaderProxy`, and the
 `I{ShaderProgram,GlUniform,CompiledShader}Ext` interfaces remain blocked as above.
 
+## Does the native backend (MCVR) need 26.2 updates?
+
+Evaluated `../MCVR` (v0.1.5, same line as this mod; no 26.2 work yet). **Very likely no
+functional/version changes needed**, because MCVR is decoupled from MC specifics:
+- **JNI contracts are opaque** (ids/pointers/byte-blobs) — independent of MC types.
+- **Vertex layouts are byte-identical.** MCVR (`vertex_formats.cpp`) expects
+  position `R32G32B32_SFLOAT`, color `R8G8B8A8_UNORM`, uv0 `R32G32_SFLOAT`, uv1/uv2
+  `R16G16_SINT`, normal `R8G8B8A8_SNORM` — exactly 26.2's `DefaultVertexFormat`
+  (`RGB32_FLOAT`/`RGBA8_UNORM`/`RG32_FLOAT`/`RG16_SINT`/`RG16_SINT`/`RGBA8_SNORM`).
+- **Overlay shaders are translated by the Java side at runtime** and referenced by path;
+  MCVR ships only its own post/world/RT shaders (no hardcoded MC uniform names). Texture
+  data is fed as `VkFormat` (preserved). World height params (`sizeY`, `bottomSectionCoord`)
+  are runtime args; unchanged in 26.2. No MC version string anywhere in MCVR.
+
+**When MCVR *would* need touching:**
+1. **Rebuild** against regenerated JNI headers **iff the Java port changes any `native`
+   signature.** The port so far preserves them (only Java-side overloads changed); if the
+   vertex-consumer/chunk/entity rewrites must add/alter a native method, MCVR's matching
+   `Java_…_method` must be updated + rebuilt.
+2. New native methods for any 26.2 render feature the mod newly hooks.
+3. Runtime semantic mismatches (static analysis can't catch e.g. a changed lightmap encoding
+   or chunk-geometry packing) — verify at runtime once the Java side renders.
+
+Bottom line: the existing MCVR binary should work with a Java-only 26.2 port as long as the
+`native` signatures stay identical; MCVR only needs a rebuild (not a rewrite) if they change.
+
 ## Access widener
 
 The original 40+ entries are Yarn-named and many target now-deleted classes
