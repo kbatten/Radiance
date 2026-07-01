@@ -482,9 +482,28 @@ Terrain texture = block atlas (`TextureAtlas.LOCATION_BLOCKS`); alphaMode maps s
 `ChunkSectionLayer` (SOLID→opaque, CUTOUT→cutout, TRANSLUCENT→transparent).
 
 **Cluster progress:** ✅ `IChunkBuilderExt`+`ChunkBuilderMixins` (dispatcher accessor), ✅
-`SectionBuilderMixins` (`compile` hook). Remaining: `ChunkProxy` (rebuild loop) +
-`ChunkBuilderBuiltChunkMixins`/`IChunkBuilderBuiltChunkExt` (RenderSection lifecycle) +
-`BuiltChunkStorageMixins` + `BuiltBufferMixins`, all coupled to the `ChunkProxy` rewrite.
+`SectionBuilderMixins` (`compile` hook), ✅ `BufferProxy` (buffer bridge; `updateWorldUniform`
+now takes render-state as params), ✅ `BuiltBufferMixins` (`decodeQuadCentroids`). Remaining:
+`ChunkProxy` (rebuild loop) + `ChunkBuilderBuiltChunkMixins`/`IChunkBuilderBuiltChunkExt`
+(RenderSection lifecycle) + `BuiltChunkStorageMixins`.
+
+**ChunkProxy rebuild loop needs re-architecture (not a port).** `ChunkProxy.rebuild(Camera)`
+polls `builtChunk.needsRebuild()` / `shouldBuild()` / `cancelRebuild()` / `needsImportantRebuild()`
+/ `scheduleRebuild(boolean)` — **all removed** from `RenderSection`. In 26.2 the dirty-tracking
+and compile scheduling moved out of the section into `LevelRenderer`/`RenderSectionManager`;
+`RenderSection` only exposes `reset()` (was `clear`), `setSectionNode(long)` (was `setSectionPos`),
+`compileAsync(RenderSectionRegion)` / `createCompileTask`, and the dispatcher's
+`SectionTaskDynamicQueue`. Storage also moved: `BuiltChunkStorage.chunks[]` → `RotatingSectionStorage`
+inside the dispatcher. Two candidate integrations:
+- **A — keep the standalone loop:** hook 26.2's compile trigger (`RenderSection.compileAsync` or
+  `LevelRenderer.setSectionDirty`) to `ChunkProxy.enqueueRebuild` + cancel MC's own compile, and
+  drop the `needsRebuild`/`shouldBuild` poll (queue membership already means dirty). Closest to the
+  mod's current architecture.
+- **B — hook the compile result:** let MC's dispatcher run its normal compile (already producing PBR
+  `MeshData` via `SectionBuilderMixins`) and hook the mesh-set / `uploadTerrainBuffersToGpu` to feed
+  native + skip the GL upload. Less machinery, bigger departure.
+The `RenderSection` lifecycle mixin (`reset`/`setSectionNode` → enqueue/relocate) and the storage
+mixin fall out of whichever integration is chosen.
 
 ## Vertex path (partial)
 
