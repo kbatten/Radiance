@@ -593,6 +593,35 @@ port was kept structurally parallel to upstream for forward-porting — see memo
 - `ChunkData.EMPTY`/anonymous `ChunkData` → `SectionMesh`/`CompiledSectionMesh.UNCOMPILED`;
   `builtChunk.data` → `renderSection.sectionMesh`.
 
+## Entity / vertex-provider path — SubmitNodeCollector rearchitecture (2nd crux)
+
+**26.2 removed `VertexConsumerProvider` / `MultiBufferSource` entirely.** There is no
+`getBuffer(RenderType) -> VertexConsumer` immediate-mode provider anymore; entity/item rendering
+moved to a **deferred `net.minecraft.client.renderer.SubmitNodeCollector`** — renderers *submit*
+nodes (`EntityRenderDispatcher.render(..., SubmitNodeCollector, ...)`), and geometry is written to
+a `VertexConsumer` later at flush via `SubmitNodeCollector.CustomGeometryRenderer.render(PoseStack.Pose,
+VertexConsumer)`. `VertexConsumer` and `RenderBuffers` survive at the low level, but the provider
+abstraction is gone.
+
+Impact: the mod captured entity/item geometry by passing its `StorageVertexConsumerProvider`
+(a `VertexConsumerProvider` that hands out `PBRVertexConsumer`s) into the render calls. That
+strategy has no 26.2 shape — **`StorageVertexConsumerProvider` /
+`StorageOutlineVertexConsumerProvider` can't be ported as-is**, and the whole
+**entity/item + world-render cluster** (`EntityProxy`, the entity/item/held-item renderer mixins,
+`WorldRendererMixins`/`CloudRendererMixins`) is a **coupled rearchitecture** around
+`SubmitNodeCollector` — a second crux comparable to the shader subsystem, not the "clean port" the
+options table first assumed. Capture must move to the collector's flush point (intercept where the
+submitted node's `CustomGeometryRenderer` is invoked and substitute a `PBRVertexConsumer` for the
+`VertexConsumer` it writes to). The genuinely clean remaining subsystems are the **low-level**
+ones that still take a `VertexConsumer` directly (block/fluid model renderers, particles) + the
+misc/core mixins — not the entity provider layer.
+
+`RenderType` texture extraction (needed by whatever feeds `PBRVertexConsumer` on the entity path):
+`RenderType.state.textures.values().first().location()` — reachable via access-widener (26.2 is
+de-obfuscated so `TextureBinding.location()` is already public; widen the `TextureBinding` class +
+`RenderSetup.textures` / `RenderType.state` / `RenderType.name` fields). Mirrors the upstream
+`RenderLayer.MultiPhase.phases.texture.getId()` direct-field access.
+
 ## Vertex path (partial)
 
 The custom PBR vertex pipeline is a deep rewrite. Foundation **done**:
