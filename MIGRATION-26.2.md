@@ -390,9 +390,21 @@ for `drawTextWithShadow`, `centeredText`, `blit(RenderPipeline, Identifier, …)
 **Done (recipe):** `ShaderPackSettingsScreen`, `ModuleAttributeScreen`, `AttributeWidgetUtil`,
 `ShaderPackScreen` (list widget + input events + legacy formatting).
 
-**Pure-GUI remainder (OptionInstance rewrite):** `PotentialValuesBasedCallbacksNoValue`,
-`VideoOptionsScreenMixins`, `CategoryVideoOptionEntry` — `SimpleOption`→`OptionInstance`
-(`CyclingCallbacks`→`ValueSet`, `CycleButton`).
+**OptionInstance work:**
+- `PotentialValuesBasedCallbacksNoValue` — **done**: `SimpleOption.CyclingCallbacks` →
+  `OptionInstance.CycleableValueSet` (`validate`→`validateValue`, `getValues()`→
+  `valueListSupplier()` via `CycleButton.ValueListSupplier.create`; the custom
+  `getWidgetCreator` write/callback moves to `OptionInstance#onValueUpdate` at the caller).
+- `CategoryVideoOptionEntry` — **retired**: `OptionsList.Entry`/`AbstractEntry`/`HeaderEntry`
+  are all `protected` (can't subclass), but `OptionsList.addHeader(Component)` is public and does
+  exactly what this custom category-header entry did → replace `body.addEntry(new
+  CategoryVideoOptionEntry(text, body))` with `list.addHeader(text)`.
+- `VideoOptionsScreenMixins` — **remaining, entangled**: a large `SimpleOption`→`OptionInstance`
+  rewrite (~6 option constructors: `ValidatingIntSliderCallbacks`→`OptionInstance.IntRange`,
+  `emptyTooltip`/`enumValueText`/`ofBoolean`, `GameOptions` getters→accessors, `Monitor`/
+  `VideoMode`/`Window` API, `OptionListWidget` add-methods→`OptionsList.addBig/addSmall/addHeader`)
+  **and** it constructs `RenderPipelineScreen` (render-coupled, below) — so it can't compile until
+  that is ported.
 
 **Actually render-coupled (not pure-GUI):** `RenderPipelineScreen` (calls
 `IDrawContextExt.radiance$drawOrientedQuad` — the deferred `DrawContextMixins` `VertexConsumer`
