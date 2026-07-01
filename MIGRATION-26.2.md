@@ -457,13 +457,32 @@ The custom PBR vertex pipeline is a deep rewrite. Foundation **done**:
   `addAttribute(name, GpuFormat)`; the removed `Builder#skip(4)` is an explicit 4-byte
   `Padding` attribute.
 
+**Vertex-consumer keystone — DONE** (`client/vertex/PBRVertexConsumer`, redesigned):
+- Renamed `VertexConsumer` methods (`vertex`/`color`/`texture`/`overlay`/`light`/`normal` →
+  `addVertex`/`setColor`/`setUv`/`setUv1`/`setUv2`/`setNormal`), plus the two new abstract
+  methods `setColor(int packedArgb)` and `setLineWidth(float)` (no-op for PBR).
+- `BufferAllocator`→`ByteBufferBuilder` (`allocate`→`reserve`, `getAllocated`→`build`);
+  `BuiltBuffer`→`MeshData` (`DrawParameters`→`DrawState`); `VertexFormat.DrawMode`→
+  `com.mojang.blaze3d.PrimitiveTopology` (`getIndexCount`→`indexCount`);
+  `VertexFormat.IndexType`→`com.mojang.blaze3d.IndexType` (`smallestFor`→`least`).
+- **Removed element-id/mask model.** `VertexFormatElement` is now `record(name, offset,
+  GpuFormat)` with no id, so `getRequiredMask`/`getOffsetsByElementId`/`getBit`/`streamFromMask`
+  are gone. The mask was purely an offset lookup + a redundant guard (requiredMask was always 0,
+  writableMask covered every non-position attribute), so it is replaced by direct writes to
+  fixed offsets precomputed in `PBRVertexFormats` (`getElement(name).offset()`).
+- **Render-state classification moved out of the class.** `RenderPhase` and
+  `RenderLayer.MultiPhase.phases` are removed, and 26.2 forks chunk vs entity geometry onto
+  different types (`ChunkSectionLayer` enum vs `RenderType`). The constructor now takes the two
+  resolved ints it actually needs — `(ByteBufferBuilder, int textureID, int alphaMode)` — and
+  the caller resolves them: trivial for chunk (block atlas id + ChunkSectionLayer→alphaMode),
+  RenderType-based for entity/item (deferred to those subsystems; `getPostTextMode(String)` +
+  the `ALPHA_MODE_*` constants stay here for reuse). This sidesteps the package-private
+  `RenderSetup.textures`/`TextureBinding` texture-extraction problem entirely for the chunk path.
+- `GLint`/`GLintOverlay` now take a resolved `int glintTextureID` and `PoseStack.Pose`
+  (`getPositionMatrix`/`getNormalMatrix`→`pose()`/`normal()`;
+  `Direction.getFacing`→`getApproximateNearest`, `getRotationQuaternion`→`getRotation`).
+
 **Still a ground-up rewrite** (removed/rewritten APIs, not mechanical renames):
-- `client/vertex/PBRVertexConsumer` (602 L) — built on the removed **`RenderPhase`/
-  `RenderLayer.MultiPhase.phases`** state system and the removed **element-id model**
-  (`element.id()`/`getBit()`/`getRequiredMask()`/`format.has`), plus the renamed
-  `VertexConsumer` methods (`vertex`/`color`/`texture`/`overlay`/`next` →
-  `addVertex`/`setColor`/`setUv`/`setUv1`/…). `BuiltBuffer`→`MeshData`,
-  `BufferAllocator`→`ByteBufferBuilder`, `VertexFormat.DrawMode`→`Mode`.
 - `client/vertex/{StorageVertexConsumerProvider,StorageOutlineVertexConsumerProvider}` —
   `VertexConsumerProvider`→`MultiBufferSource`, `RenderLayer`→`RenderType`.
 - `client/proxy/vulkan/BufferProxy` — `RenderPhase`, `BuiltBuffer`→`MeshData`, `Fog`,

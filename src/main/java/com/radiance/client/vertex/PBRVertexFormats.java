@@ -21,6 +21,7 @@ import static com.radiance.client.vertex.PBRVertexFormatElements.PBR_USE_TEXTURE
 
 import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormatElement;
 
 public class PBRVertexFormats {
 
@@ -59,4 +60,37 @@ public class PBRVertexFormats {
 
             .addAttribute("Padding", GpuFormat.R32_FLOAT)
             .build();
+
+    // 26.2: Yarn's VertexFormatElement carried a numeric id used to index
+    // getOffsetsByElementId(); the 26.2 VertexFormatElement is a record(name, offset,
+    // GpuFormat) that stores the byte offset directly. Since the PBR layout is a fixed
+    // 128-byte struct we control, precompute each attribute's byte offset here (from the
+    // built format, so it stays in sync with the attribute order above) and let
+    // PBRVertexConsumer write to fixed offsets instead of the removed mask/id machinery.
+    private static int off(String name) {
+        VertexFormatElement element = PBR_TRIANGLE.getElement(name);
+        if (element == null) {
+            throw new IllegalStateException("PBR vertex format is missing attribute: " + name);
+        }
+        return element.offset();
+    }
+
+    public static final int STRIDE = PBR_TRIANGLE.getVertexSize();
+
+    public static final int OFF_POS = off("Pos");
+    public static final int OFF_USE_NORM = off("UseNorm");
+    public static final int OFF_NORM = off("Norm");
+    public static final int OFF_USE_COLOR_LAYER = off("UseColorLayer");
+    public static final int OFF_COLOR_LAYER = off("ColorLayer");
+    public static final int OFF_USE_TEXTURE = off("UseTexture");
+    public static final int OFF_USE_OVERLAY = off("UseOverlay");
+    public static final int OFF_TEXTURE_UV = off("TextureUV");
+    public static final int OFF_OVERLAY_UV = off("OverlayUV");
+    public static final int OFF_USE_GLINT = off("UseGlint");
+    public static final int OFF_TEXTURE_ID = off("TextureID");
+    public static final int OFF_GLINT_UV = off("GlintUV");
+    public static final int OFF_GLINT_TEXTURE = off("GlintTexture");
+    public static final int OFF_USE_LIGHT = off("UseLight");
+    public static final int OFF_LIGHT_UV = off("LightUV");
+    public static final int OFF_POST_BASE = off("PostBase");
 }
