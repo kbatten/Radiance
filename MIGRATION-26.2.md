@@ -342,6 +342,43 @@ is uniform-model-agnostic, so this is a normal (large) Java port like the textur
   chunk cluster); it needs a dedicated focused pass. `IShaderProgramExt.radiance$getUniformsValue()`
   (`List<GlUniform>`) is replaced by UBO-slice accessors.
 
+**Uniform-mapping design (worked out — `createUniform` becomes a name-keyed resolver).**
+`ShaderField.name` is MC's GLSL uniform name; in 26.2 each lives in one of five built-in UBOs.
+The 26.2 struct layouts (std140):
+- **DynamicTransforms** (`DynamicUniforms.Transform` = `mat4+vec4+vec3+mat4`): `ModelViewMat`,
+  `ColorModulator`, `ModelOffset`, `TextureMat` — written **per-draw** via
+  `getDynamicUniforms().writeTransform(modelView, colorModulator, modelOffset, textureMat)`.
+- **Projection** (`ProjectionMatrixBuffer`): `ProjMat`.
+- **Globals** (`GlobalSettingsUniform` = `ivec3+vec3+vec2+float+float+int+int`): camera block pos,
+  camera fraction, `ScreenSize`, `GlintAlpha`, `GameTime` (`(gameTime%24000 + partialTick)/24000`),
+  `MenuBlurRadius`.
+- **Lighting** (`RenderSystem.getShaderLights()` slice): `Light0_Direction`, `Light1_Direction`.
+- **Fog** (`FogData` via `RenderSystem.setShaderFog`): `FogColor`, `environmentalStart/End`,
+  `renderDistanceStart/End`, `skyEnd`, `cloudEnd`, shape.
+
+Field → source table (write at `field.offset()`, reuse the existing `putInts`/`putFloats`/
+`putMatrix` incl. the `ProjMat` remap):
+
+| ShaderField.name | 26.2 source |
+| --- | --- |
+| `ModelViewMat` | `RenderSystem.getModelViewMatrixCopy()` |
+| `ProjMat` | RenderSystem projection matrix (accessor, else captured at `setProjectionMatrix`) + existing `mapProjectionMatrix` |
+| `TextureMat` / `ColorModulator` / `ModelOffset` | **captured per-draw** at `DynamicUniforms.writeTransform` (defaults identity / white / 0) |
+| `ScreenSize` | `Window` width/height |
+| `GameTime` / `GlintAlpha` / `MenuBlurRadius` | `GlobalSettingsUniform` inputs (RenderSystem/`DeltaTracker`/Options) |
+| `Light0_Direction` / `Light1_Direction` | captured at `RenderSystem.setShaderLights` |
+| `FogColor` / `Fog*Start` / `Fog*End` / `FogShape` | captured at `RenderSystem.setShaderFog` (or read `FogRenderer`/`FogData`) |
+| `Sampler0/1/2…` | existing `resolveSamplerTextureId` (`RenderSystem.getShaderTexture`) — unchanged |
+
+**Capture hooks (small, replace the removed per-`GlUniform` reads):** mixin/redirect
+`DynamicUniforms.writeTransform` (per-draw transform quad), `RenderSystem.setShaderLights`, and
+`RenderSystem.setShaderFog` to stash the CPU-side values the resolver reads; matrices/window/time
+come from direct accessors. This keeps `createUniform`'s per-field structure (only the *source* of
+each value changes: `GlUniform` → resolver), which preserves forward-port alignment with 1.21.11.
+Open detail to settle during impl: whether to read Lighting/Fog values from the captured slice
+bytes (std140 offsets) or reconstruct them from `FogRenderer`/lighting setup — prefer capturing at
+the `set*` call since it receives the data being uploaded.
+
 26.2 replaced that entire system:
 - `CompiledShader`→`com.mojang.blaze3d.opengl.GlShaderModule` (compiled via
   `GlDevice.getOrCompileShader(Identifier, ShaderType, ShaderDefines, ShaderSource)`).
