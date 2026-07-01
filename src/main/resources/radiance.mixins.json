@@ -16,7 +16,6 @@
     "vanilla_resource_tracker.FontStorageMixins",
     "vanilla_resource_tracker.GlyphAtlasTextureMixins",
     "vanilla_resource_tracker.NativeImageMixins",
-    "vanilla_resource_tracker.OverlayTextureMixins",
     "vanilla_resource_tracker.TextureUtilMixins",
     "vanilla_resource_tracker.TtfGlyphMixins",
     "vanilla_resource_tracker.UnicodeTextureGlyphMixins",
