@@ -505,6 +505,32 @@ inside the dispatcher. Two candidate integrations:
 The `RenderSection` lifecycle mixin (`reset`/`setSectionNode` → enqueue/relocate) and the storage
 mixin fall out of whichever integration is chosen.
 
+**Decision: Approach A** (1.21.11 stays maintained, so the 26.2 port is kept structurally
+parallel to upstream for forward-porting — see memory `keep-26_2-parallel-to-1-21-11`). Mapped
+implementation:
+- **Compile trigger** — `@Inject` HEAD-cancellable into `RenderSection.compileAsync(RenderSectionRegion)`
+  (MC calls it from `LevelRenderer` only when a section is dirty & should build) →
+  `ChunkProxy.enqueueRebuild(self)` + `ci.cancel()`. Replaces the old `scheduleRebuild`/`clear`
+  enqueue points; the `needsRebuild`/`shouldBuild` poll in `rebuild(Camera)` is dropped (queue
+  membership already means dirty).
+- **Own rebuild loop** — for each queued `RenderSection`: rebuild the region via
+  `new RenderRegionCache().createRegion(Minecraft.getInstance().level, section.getSectionNode())`;
+  if null → `invalidateSingle`; else `sectionCompiler.compile(SectionPos.of(sectionNode), region,
+  vertexSorting, pack)` (intercepted by `SectionBuilderMixins` → PBR `Results`), then feed
+  `Results.renderedLayers` (`Map<ChunkSectionLayer,MeshData>`) to native `rebuildSingle`.
+  Compiler via `((IChunkBuilderExt) dispatcher).radiance$getSectionCompiler()`.
+- **Lifecycle mixin** (`ChunkBuilderBuiltChunkMixins` → `RenderSection`): `setSectionPos(J)` →
+  `setSectionNode(J)` TAIL → `relocateSingle(index, renderOrigin)`. The old `<init>` stream.collect
+  redirect + `delete()` cancel are obsolete (RenderSection `<init>` is `(int index, long sectionNode)`,
+  no per-section buffer setup).
+- **Storage mixin** (`BuiltChunkStorageMixins` → `ViewArea`): `clear()`→`ChunkProxy.clear()`;
+  size/init hook → `ChunkProxy.init(...)`; `updateCameraPosition`→`updateSectionPos`. `storage.chunks[]`
+  iteration for `rebuildAll` → the dispatcher's `RotatingSectionStorage` (`Iterable`/`forEach`).
+- **Dispatcher capture** — `@Inject` `SectionRenderDispatcher` `<init>` TAIL →
+  `ChunkProxy.setDispatcher(self)` (single instance; mirrors the current `currentStorage` static).
+- `ChunkData.EMPTY`/anonymous `ChunkData` → `SectionMesh`/`CompiledSectionMesh.UNCOMPILED`;
+  `builtChunk.data` → `renderSection.sectionMesh`.
+
 ## Vertex path (partial)
 
 The custom PBR vertex pipeline is a deep rewrite. Foundation **done**:
