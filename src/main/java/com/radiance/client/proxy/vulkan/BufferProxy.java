@@ -6,19 +6,13 @@ import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.system.MemoryUtil.memAddress;
 import static org.lwjgl.system.MemoryUtil.memSet;
 
-import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.blaze3d.vertex.MeshData;
 import com.radiance.client.constant.Constants;
 import com.radiance.client.texture.TextureTracker;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.util.Map;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.BuiltBuffer;
-import net.minecraft.client.render.Camera;
-import net.minecraft.client.render.Fog;
-import net.minecraft.client.render.RenderPhase;
-import net.minecraft.client.render.VertexFormat;
-import net.minecraft.client.world.ClientWorld;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.system.MemoryStack;
@@ -52,26 +46,28 @@ public class BufferProxy {
 
     public static native void performQueuedUpload();
 
-    public static VertexIndexBufferHandle createAndUploadVertexIndexBuffer(
-        BuiltBuffer builtBuffer) {
-        BuiltBuffer.DrawParameters drawParameters = builtBuffer.getDrawParameters();
-        assert builtBuffer.getDrawParameters().mode() == VertexFormat.DrawMode.QUADS;
+    // 26.2: BuiltBuffer -> MeshData (getDrawParameters -> drawState; DrawParameters -> DrawState;
+    // mode() -> primitiveTopology(); getVertexSizeByte -> getVertexSize; IndexType.size -> .bytes;
+    // getBuffer -> vertexBuffer(); getSortedBuffer -> indexBuffer()).
+    public static VertexIndexBufferHandle createAndUploadVertexIndexBuffer(MeshData meshData) {
+        MeshData.DrawState drawState = meshData.drawState();
+        assert drawState.primitiveTopology() == PrimitiveTopology.QUADS;
 
-        int vertexSize = drawParameters.vertexCount() * drawParameters.format().getVertexSizeByte();
+        int vertexSize = drawState.vertexCount() * drawState.format().getVertexSize();
         int vertexId = allocateBuffer();
         initializeBuffer(vertexId, vertexSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT.getValue());
-        queueUpload(builtBuffer.getBuffer(), vertexSize, vertexId);
+        queueUpload(meshData.vertexBuffer(), vertexSize, vertexId);
 
-        int indexSize = drawParameters.indexCount() * drawParameters.indexType().size;
+        int indexSize = drawState.indexCount() * drawState.indexType().bytes;
         int indexId = allocateBuffer();
         initializeBuffer(indexId, indexSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT.getValue());
-        if (builtBuffer.getSortedBuffer() != null) {
-            queueUpload(builtBuffer.getSortedBuffer(), indexSize, indexId);
+        if (meshData.indexBuffer() != null) {
+            queueUpload(meshData.indexBuffer(), indexSize, indexId);
         } else {
-            int type = Constants.IndexTypes.getValue(drawParameters.indexType());
-            int drawMode = Constants.DrawModes.getValue(drawParameters.mode());
-            buildIndexBuffer(indexId, type, drawMode, drawParameters.vertexCount(),
-                drawParameters.indexCount());
+            int type = Constants.IndexTypes.getValue(drawState.indexType());
+            int drawMode = Constants.DrawModes.getValue(drawState.primitiveTopology());
+            buildIndexBuffer(indexId, type, drawMode, drawState.vertexCount(),
+                drawState.indexCount());
         }
 
         return new VertexIndexBufferHandle(vertexId, indexId);
@@ -116,9 +112,18 @@ public class BufferProxy {
 
     public static native void updateWorldUniform(long ptr);
 
-    public static void updateWorldUniform(Camera camera, Matrix4f viewMatrix,
-        Matrix4f effectedViewMatrix, Matrix4f projectionMatrix, int overlayTextureID, Fog fog,
-        ClientWorld world, int endSkyTextureID, int endPortalTextureID, int lightMapTextureID) {
+    // 26.2: the render-loop state this uniform packs (fog, game time, glint texture matrix, sky
+    // type, camera mode) came from APIs that were removed/reworked into UBOs
+    // (net.minecraft.client.render.Fog, RenderPhase.setupGlintTexturing +
+    // RenderSystem.getTextureMatrix/getShaderGameTime, DimensionEffects#getSkyType). Rather than
+    // reach into the render loop from here, this now takes those values as parameters -- the
+    // caller (the world-render loop) resolves them from 26.2's fog/render UBOs. Byte layout is
+    // unchanged.
+    public static void updateWorldUniform(Matrix4f viewMatrix, Matrix4f effectedViewMatrix,
+        Matrix4f projectionMatrix, Matrix4f glintTextureMatrix, float gameTime,
+        int overlayTextureID, boolean firstPerson, float fogStart, float fogEnd, float fogRed,
+        float fogGreen, float fogBlue, float fogAlpha, int fogShape, int skyType,
+        int endSkyTextureID, int endPortalTextureID, int lightMapTextureID) {
         try (MemoryStack stack = stackPush()) {
             int size = 592;
             ByteBuffer bb = stack.malloc(size);
@@ -137,39 +142,35 @@ public class BufferProxy {
             baseAddr += Float.BYTES * 16 * 3; // skip the inverse
             baseAddr += Float.BYTES * 2; // skip the jitter
 
-            float gameTime = RenderSystem.getShaderGameTime();
             bb.putFloat(baseAddr, gameTime);
             baseAddr += Float.BYTES;
 
             baseAddr += Integer.BYTES; // skip seed
 
-            RenderPhase.setupGlintTexturing(0.16F);
-            Matrix4f textureMat = RenderSystem.getTextureMatrix();
-            textureMat.get(baseAddr, bb);
+            glintTextureMatrix.get(baseAddr, bb);
             baseAddr += Float.BYTES * 16;
-            RenderSystem.resetTextureMatrix();
 
             bb.putInt(baseAddr, overlayTextureID);
             baseAddr += Integer.BYTES;
-            bb.putInt(baseAddr, camera.isThirdPerson() ? 0 : 1);
+            bb.putInt(baseAddr, firstPerson ? 1 : 0);
             baseAddr += Integer.BYTES;
-            bb.putFloat(baseAddr, fog.start());
+            bb.putFloat(baseAddr, fogStart);
             baseAddr += Float.BYTES;
-            bb.putFloat(baseAddr, fog.end());
+            bb.putFloat(baseAddr, fogEnd);
             baseAddr += Float.BYTES;
 
-            bb.putFloat(baseAddr, fog.red());
+            bb.putFloat(baseAddr, fogRed);
             baseAddr += Float.BYTES;
-            bb.putFloat(baseAddr, fog.green());
+            bb.putFloat(baseAddr, fogGreen);
             baseAddr += Float.BYTES;
-            bb.putFloat(baseAddr, fog.blue());
+            bb.putFloat(baseAddr, fogBlue);
             baseAddr += Float.BYTES;
-            bb.putFloat(baseAddr, fog.alpha());
+            bb.putFloat(baseAddr, fogAlpha);
             baseAddr += Float.BYTES;
 
-            bb.putInt(baseAddr, fog.shape().getId());
+            bb.putInt(baseAddr, fogShape);
             baseAddr += Integer.BYTES;
-            bb.putInt(baseAddr, world.getDimensionEffects().getSkyType().ordinal());
+            bb.putInt(baseAddr, skyType);
             baseAddr += Integer.BYTES;
             baseAddr += Integer.BYTES;
             baseAddr += Integer.BYTES;
