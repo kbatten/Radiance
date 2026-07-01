@@ -319,6 +319,29 @@ packs the same blob.
 Old note (superseded): "blocked on native code" — that was before reading MCVR; the native side
 is uniform-model-agnostic, so this is a normal (large) Java port like the texture subsystem.
 
+**Confirmed 26.2 hook points (from reading `GlDevice`/`GlProgram`/`ShaderProxy`):**
+- **Source capture** → `@Mixin(GlDevice)` hooking `getOrCompileShader(Identifier id, ShaderType
+  type, ShaderDefines defines, ShaderSource shaderSource)` (protected, all-public params) —
+  **not** the private `compileShader(ShaderCompilationKey, ShaderSource)` whose `ShaderCompilationKey`
+  record is private and unnameable by a mixin. Resolve the GLSL via `shaderSource.get(id, type)`,
+  return a virtual `GlShaderModule` (public ctor `(shaderId, Identifier, ShaderType)` — no more
+  reflection). Replaces `@Mixin(CompiledShader)`/`compile`.
+- **Program capture** → `GlDevice.compileProgram(RenderPipeline, ShaderSource)` /
+  `GlProgram.link` (replaces `ShaderLoader.createProgram` + `ShaderProgram.create`). Name/vertex
+  format/sources come off the `RenderPipeline` + the captured shader modules.
+- `ShaderProgram.create`/`set`/`bind`/`unbind`/`close` → `GlProgram` (the linked program + its
+  `opengl.Uniform` Ubo/Utb/Sampler bindings). `GlUniformMixins`/`IGlUniformExt` **retire** (no
+  per-uniform buffers).
+- **The crux — `ShaderProxy.createUniform`:** it packs the mod's blob by iterating
+  `ShaderDefinition.fields()` and reading each field's `GlUniform` value. In 26.2 there are no
+  per-uniform buffers; each field's value must be sourced from the built-in UBOs (Projection =
+  modelView+proj via `RenderSystem.getModelViewMatrix()`/`getProjectionMatrix()`; Lighting; Fog;
+  Globals via `RenderSystem.getDynamicUniforms()`) and written at the field's offset — a
+  by-name/semantic mapping of ~dozens of fields. This is the real design problem and the reason
+  the subsystem is a coupled rearchitecture (not decomposable into independent commits like the
+  chunk cluster); it needs a dedicated focused pass. `IShaderProgramExt.radiance$getUniformsValue()`
+  (`List<GlUniform>`) is replaced by UBO-slice accessors.
+
 26.2 replaced that entire system:
 - `CompiledShader`→`com.mojang.blaze3d.opengl.GlShaderModule` (compiled via
   `GlDevice.getOrCompileShader(Identifier, ShaderType, ShaderDefines, ShaderSource)`).
