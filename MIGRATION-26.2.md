@@ -616,6 +616,19 @@ submitted node's `CustomGeometryRenderer` is invoked and substitute a `PBRVertex
 ones that still take a `VertexConsumer` directly (block/fluid model renderers, particles) + the
 misc/core mixins — not the entity provider layer.
 
+Related — the same immediate-mode overhaul makes several other "render-hook" mixins rewrites, not
+clean ports: **`BlockModelRendererMixins`** hooked `ModelBlockRenderer.renderQuad(…VertexConsumer…)`
+which is **gone** (blocks render via `putBlockBakedQuad`/`QuadInstance` now), and its color source
+`BlockColors.getColor(state,world,pos,tint)` is gone too (→ `getTintSources`); it needs
+re-architecting around the quad-instance model (+ `PBRVertexConsumer.albedoEmission`, dropped from
+the keystone — re-add when doing this). **`FluidRendererMixins`** (676 L) hooks
+`FluidRenderer.render(…VertexConsumer…)` but 26.2 renamed it to `tesselate(…Output…)` and renamed
+every internal it shadows (`isSameFluid`→`isNeighborSameFluid`, `calculateFluidHeight`→
+`calculateAverageHeight`, `getFluidHeight`→`getHeight`, `getLight`→`getLightCoords`, …) — a full
+rewrite. `BillboardParticleMixins` similarly writes to a `VertexConsumer`. The genuinely clean
+remainder is the **non-render-hook** files (`GlStateManager`, `Lightmap`, `AuxiliaryTextures` ✅,
+`ParticleManager`) — large but not tied to the render-model change.
+
 `RenderType` texture extraction (needed by whatever feeds `PBRVertexConsumer` on the entity path):
 `RenderType.state.textures.values().first().location()` — reachable via access-widener (26.2 is
 de-obfuscated so `TextureBinding.location()` is already public; widen the `TextureBinding` class +

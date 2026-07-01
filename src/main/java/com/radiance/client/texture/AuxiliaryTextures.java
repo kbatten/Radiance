@@ -210,7 +210,7 @@ public enum AuxiliaryTextures {
 
                     if (auxiliaryImage.getWidth() != source.getWidth()
                         || auxiliaryImage.getHeight() != source.getHeight()
-                        || auxiliaryImage.format() != source.getFormat()) {
+                        || auxiliaryImage.format() != source.format()) {
                         throw new RuntimeException(
                             auxiliaryTexture.name + " image size / format mismatch");
                     }
