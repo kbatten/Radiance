@@ -470,6 +470,22 @@ together. Foundations now done: the **vertex-consumer keystone** and **`Constant
 | chunk `RenderLayer`s | `renderer.chunk.ChunkSectionLayer` enum (only `SOLID`/`CUTOUT`/`TRANSLUCENT`; `.label()`, `.byTransparency`) |
 | `RenderLayer.MultiPhase.phases.texture` | terrain texture is always the block atlas; per-`RenderType` texture lives behind package-private `RenderSetup.textures`/`TextureBinding` |
 
+**Geometry-extraction model changed** (key to `SectionBuilderMixins`): 1.21.4 rendered each
+block into a `VertexConsumer` (`blockRenderManager.renderBlock(…, PBRVertexConsumer, …)`). 26.2
+`SectionCompiler.compile` uses a `BlockQuadOutput` (baked-quad callback) +
+`BufferBuilder.putBlockBakedQuad(x,y,z,quad,instance)`. Crucially `putBlockBakedQuad` is a
+**default on `VertexConsumer`** that routes through the standard per-vertex setters, so
+`PBRVertexConsumer` still captures everything — the mixin just supplies a `BlockQuadOutput` /
+`FluidRenderer.Output` (whose `getBuilder` returns a `VertexConsumer`) that funnel each layer's
+quads into a per-`ChunkSectionLayer` PBR consumer built over `SectionBufferBuilderPack.buffer(layer)`.
+Terrain texture = block atlas (`TextureAtlas.LOCATION_BLOCKS`); alphaMode maps straight off the
+`ChunkSectionLayer` (SOLID→opaque, CUTOUT→cutout, TRANSLUCENT→transparent).
+
+**Cluster progress:** ✅ `IChunkBuilderExt`+`ChunkBuilderMixins` (dispatcher accessor), ✅
+`SectionBuilderMixins` (`compile` hook). Remaining: `ChunkProxy` (rebuild loop) +
+`ChunkBuilderBuiltChunkMixins`/`IChunkBuilderBuiltChunkExt` (RenderSection lifecycle) +
+`BuiltChunkStorageMixins` + `BuiltBufferMixins`, all coupled to the `ChunkProxy` rewrite.
+
 ## Vertex path (partial)
 
 The custom PBR vertex pipeline is a deep rewrite. Foundation **done**:
