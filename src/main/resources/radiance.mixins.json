@@ -51,6 +51,7 @@
     "vulkan_render_integration.ReloadableTextureMixins",
     "vulkan_render_integration.RenderPassMixins",
     "vulkan_render_integration.RenderSystemMixins",
+    "vulkan_render_integration.RenderTypeFeatureRendererMixins",
     "vulkan_render_integration.ScreenMixins",
     "vulkan_render_integration.ScreenshotRecorderMixins",
     "vulkan_render_integration.SectionBuilderMixins",
