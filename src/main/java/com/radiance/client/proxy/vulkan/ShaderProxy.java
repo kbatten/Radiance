@@ -1,27 +1,24 @@
 package com.radiance.client.proxy.vulkan;
 
-import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.platform.NativeImage;
+import com.radiance.client.shader.BuiltinUniforms;
 import com.radiance.client.shader.ShaderDefinition;
 import com.radiance.client.shader.ShaderField;
-import com.radiance.mixin_related.extensions.vulkan_render_integration.IGlUniformExt;
-import com.radiance.mixin_related.extensions.vulkan_render_integration.IShaderProgramExt;
+import com.radiance.mixin_related.extensions.vulkan_render_integration.IAbstractTextureExt;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import java.nio.ByteBuffer;
-import java.nio.FloatBuffer;
-import java.nio.IntBuffer;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gl.GlUniform;
-import net.minecraft.client.gl.ShaderProgram;
-import net.minecraft.client.render.VertexFormat;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
-import net.minecraft.util.Identifier;
+import java.nio.ByteOrder;
+import java.util.Map;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.resources.Identifier;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
 public final class ShaderProxy {
 
-    private static final Identifier WHITE_TEXTURE_ID = Identifier.of("radiance",
+    private static final Identifier WHITE_TEXTURE_ID = Identifier.fromNamespaceAndPath("radiance",
         "generated/white");
     private static Integer whiteTextureId;
 
@@ -41,49 +38,50 @@ public final class ShaderProxy {
             uniformSize);
     }
 
-    public static UniformHandle createUniform(ShaderDefinition shader, ShaderProgram shaderProgram,
+    /**
+     * 26.2: uniform values no longer live in per-uniform GlUniforms -- they are in the built-in UBOs
+     * bound to the draw. {@code boundUniforms} maps each UBO block name
+     * ("Projection"/"DynamicTransforms"/"Globals"/"Lighting"/"Fog") to the {@link GpuBufferSlice}
+     * bound via {@code RenderPass.setUniform}; the CPU bytes for each slice were captured at
+     * {@code CommandEncoder.writeToBuffer} ({@link UniformCapture}). Each {@link ShaderField}'s value
+     * is read from its built-in UBO at the std140 offset ({@link BuiltinUniforms}) and packed into the
+     * mod's native blob at {@code field.offset()}; sampler fields take the draw's bound textures.
+     */
+    public static UniformHandle createUniform(ShaderDefinition shader,
+        Map<String, GpuBufferSlice> boundUniforms, Object2IntMap<String> boundTextures,
         MemoryStack stack) {
         ByteBuffer bb = stack.calloc(shader.uniformBufferSize());
-        IShaderProgramExt ext = (IShaderProgramExt) (Object) shaderProgram;
-        int uniformIndex = 0;
         for (ShaderField field : shader.fields()) {
             if (field.isSampler()) {
-                bb.putInt(field.offset(), resolveSamplerTextureId(ext, field));
+                bb.putInt(field.offset(), resolveSamplerTextureId(boundTextures, field));
                 continue;
             }
-            GlUniform uniform = ext.radiance$getUniformsValue()
-                .get(uniformIndex++);
-            putUniform(bb, field, uniform);
+            BuiltinUniforms.Entry entry = BuiltinUniforms.get(field.name());
+            if (entry == null) {
+                continue;
+            }
+            GpuBufferSlice slice = boundUniforms.get(entry.block());
+            if (slice == null) {
+                continue;
+            }
+            byte[] captured = UniformCapture.get(slice);
+            if (captured == null) {
+                continue;
+            }
+            ByteBuffer src = ByteBuffer.wrap(captured).order(ByteOrder.nativeOrder());
+            putUniform(bb, field, src, entry.uboOffset());
         }
         return new UniformHandle(MemoryUtil.memAddress(bb), shader.uniformBufferSize());
-    }
-
-    public static void syncState(ShaderProgram shaderProgram, VertexFormat.DrawMode drawMode) {
-        shaderProgram.initializeUniforms(drawMode, RenderSystem.getModelViewMatrix(),
-            RenderSystem.getProjectionMatrix(), MinecraftClient.getInstance().getWindow());
     }
 
     public record UniformHandle(long addr, int size) {
 
     }
 
-    private static int resolveSamplerTextureId(IShaderProgramExt ext, ShaderField field) {
-        Object2IntMap<String> samplerTextures = ext.radiance$getSamplerTexturesValue();
-        if (samplerTextures.containsKey(field.name())) {
-            int textureId = samplerTextures.getInt(field.name());
-            if (textureId != 0) {
-                return textureId;
-            }
-        }
-        Integer fallbackSlot = tryParseSamplerSlot(field.name());
-        if (fallbackSlot != null) {
-            int textureId = RenderSystem.getShaderTexture(fallbackSlot);
-            if (textureId != 0) {
-                return textureId;
-            }
-        }
-        if (field.samplerSlot() >= 0) {
-            int textureId = RenderSystem.getShaderTexture(field.samplerSlot());
+    private static int resolveSamplerTextureId(Object2IntMap<String> boundTextures,
+        ShaderField field) {
+        if (boundTextures.containsKey(field.name())) {
+            int textureId = boundTextures.getInt(field.name());
             if (textureId != 0) {
                 return textureId;
             }
@@ -103,74 +101,64 @@ public final class ShaderProxy {
         NativeImage image = new NativeImage(16, 16, false);
         for (int y = 0; y < 16; y++) {
             for (int x = 0; x < 16; x++) {
-                image.setColorArgb(x, y, 0xFFFFFFFF);
+                image.setPixel(x, y, 0xFFFFFFFF);
             }
         }
-        NativeImageBackedTexture texture = new NativeImageBackedTexture(image);
-        MinecraftClient.getInstance()
+        DynamicTexture texture = new DynamicTexture(() -> "radiance_white", image);
+        Minecraft.getInstance()
             .getTextureManager()
-            .registerTexture(WHITE_TEXTURE_ID, texture);
-        whiteTextureId = texture.getGlId();
+            .register(WHITE_TEXTURE_ID, texture);
+        whiteTextureId = ((IAbstractTextureExt) (Object) texture).radiance$getGlIDUnsafe();
         return whiteTextureId;
     }
 
-    private static Integer tryParseSamplerSlot(String samplerName) {
-        if (!samplerName.startsWith("Sampler")) {
-            return null;
-        }
-        try {
-            return Integer.parseInt(samplerName.substring("Sampler".length()));
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
-    }
-
-    private static void putUniform(ByteBuffer bb, ShaderField field, GlUniform uniform) {
-        IGlUniformExt ext = (IGlUniformExt) (Object) uniform;
+    private static void putUniform(ByteBuffer blob, ShaderField field, ByteBuffer src,
+        int srcOffset) {
         switch (field.kind()) {
-            case INT -> putInts(bb, field.offset(), ext.radiance$getIntDataValue(),
-                field.componentCount());
-            case FLOAT -> putFloats(bb, field.offset(), ext.radiance$getFloatDataValue(),
-                field.componentCount());
-            case MATRIX -> putMatrix(bb, field.offset(), field.componentCount(), uniform.getName(),
-                ext.radiance$getFloatDataValue());
+            case INT -> putInts(blob, field.offset(), src, srcOffset, field.componentCount());
+            case FLOAT -> putFloats(blob, field.offset(), src, srcOffset, field.componentCount());
+            case MATRIX -> putMatrix(blob, field.offset(), field.componentCount(), field.name(),
+                src, srcOffset);
             case SAMPLER -> throw new IllegalStateException("Sampler fields are written separately");
         }
     }
 
-    private static void putInts(ByteBuffer bb, int offset, IntBuffer values, int componentCount) {
+    private static void putInts(ByteBuffer blob, int offset, ByteBuffer src, int srcOffset,
+        int componentCount) {
         for (int i = 0; i < componentCount; i++) {
-            bb.putInt(offset + i * Integer.BYTES, values.get(i));
+            blob.putInt(offset + i * Integer.BYTES, src.getInt(srcOffset + i * Integer.BYTES));
         }
     }
 
-    private static void putFloats(ByteBuffer bb, int offset, FloatBuffer values, int componentCount) {
+    private static void putFloats(ByteBuffer blob, int offset, ByteBuffer src, int srcOffset,
+        int componentCount) {
         for (int i = 0; i < componentCount; i++) {
-            bb.putFloat(offset + i * Float.BYTES, values.get(i));
+            blob.putFloat(offset + i * Float.BYTES, src.getFloat(srcOffset + i * Float.BYTES));
         }
     }
 
-    private static void putMatrix(ByteBuffer bb, int offset, int dimension, String uniformName,
-        FloatBuffer values) {
+    private static void putMatrix(ByteBuffer blob, int offset, int dimension, String uniformName,
+        ByteBuffer src, int srcOffset) {
         if (dimension == 4) {
             float[] matrix = new float[16];
             for (int i = 0; i < 16; i++) {
-                matrix[i] = values.get(i);
+                matrix[i] = src.getFloat(srcOffset + i * Float.BYTES);
             }
             if ("ProjMat".equals(uniformName)) {
                 mapProjectionMatrix(matrix);
             }
             for (int i = 0; i < 16; i++) {
-                bb.putFloat(offset + i * Float.BYTES, matrix[i]);
+                blob.putFloat(offset + i * Float.BYTES, matrix[i]);
             }
             return;
         }
 
+        // Built-in uniforms only use mat4; smaller matrices are kept for completeness.
         int columnStride = Float.BYTES * 4;
         for (int column = 0; column < dimension; column++) {
             for (int row = 0; row < dimension; row++) {
-                bb.putFloat(offset + column * columnStride + row * Float.BYTES,
-                    values.get(column * dimension + row));
+                blob.putFloat(offset + column * columnStride + row * Float.BYTES,
+                    src.getFloat(srcOffset + (column * dimension + row) * Float.BYTES));
             }
         }
     }

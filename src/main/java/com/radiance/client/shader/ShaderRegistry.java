@@ -1,9 +1,10 @@
 package com.radiance.client.shader;
 
+import com.mojang.blaze3d.opengl.GlProgram;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import com.radiance.client.RadianceClient;
 import com.radiance.client.constant.Constants;
 import com.radiance.client.proxy.vulkan.ShaderProxy;
-import com.radiance.mixin_related.extensions.vulkan_render_integration.IGlUniformExt;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IShaderProgramExt;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -20,23 +21,19 @@ import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import net.minecraft.client.gl.GlUniform;
-import net.minecraft.client.gl.ShaderProgram;
-import net.minecraft.client.render.VertexFormat;
-
 public final class ShaderRegistry {
 
     private static final Pattern SAMPLER_UNIFORM_PATTERN = Pattern.compile(
         "^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+sampler\\w+\\s+(\\w+)\\s*;\\s*$");
     private static final Pattern SAMPLER_SLOT_PATTERN = Pattern.compile("\\bSampler(\\d+)\\b");
 
-    private static final Map<ShaderProgram, ShaderDefinition> CACHE =
+    private static final Map<GlProgram, ShaderDefinition> CACHE =
         Collections.synchronizedMap(new WeakHashMap<>());
 
     private ShaderRegistry() {
     }
 
-    public static ShaderDefinition getOrCreate(ShaderProgram shaderProgram) {
+    public static ShaderDefinition getOrCreate(GlProgram shaderProgram) {
         ShaderDefinition cached = CACHE.get(shaderProgram);
         if (cached != null) {
             return cached;
@@ -51,7 +48,7 @@ public final class ShaderRegistry {
         CACHE.clear();
     }
 
-    private static ShaderDefinition create(ShaderProgram shaderProgram) {
+    private static ShaderDefinition create(GlProgram shaderProgram) {
         IShaderProgramExt ext = (IShaderProgramExt) (Object) shaderProgram;
         VertexFormat vertexFormat = ext.radiance$getVertexFormat();
         String vertexSource = ext.radiance$getVertexSource();
@@ -61,8 +58,7 @@ public final class ShaderRegistry {
             || shaderName == null) {
             throw new IllegalStateException("Missing shader metadata for dynamic registration");
         }
-        List<ShaderField> fields = buildFields(ext.radiance$getUniformsValue(),
-            ext.radiance$getSamplerNamesValue(), vertexSource, fragmentSource);
+        List<ShaderField> fields = buildFields(vertexSource, fragmentSource);
 
         ShaderTranslator.Result result = ShaderTranslator.translate(vertexFormat, vertexSource,
             fragmentSource, fields);
@@ -86,25 +82,29 @@ public final class ShaderRegistry {
         return new ShaderDefinition(key, shaderName, nativeId, result.uniformBufferSize(), fields);
     }
 
-    private static List<ShaderField> buildFields(List<GlUniform> uniforms,
-        List<String> samplerNames, String vertexSource, String fragmentSource) {
+    private static List<ShaderField> buildFields(String vertexSource, String fragmentSource) {
         ArrayList<ShaderField> fields = new ArrayList<>();
         int offset = 0;
 
-        for (GlUniform uniform : uniforms) {
-            IGlUniformExt ext = (IGlUniformExt) (Object) uniform;
-            int dataType = ext.radiance$getDataTypeValue();
-            int componentCount = getComponentCount(dataType);
-            ShaderField.Kind kind = getKind(dataType);
+        // 26.2: the uniform list came from the program's GlUniforms; those are gone. Instead take
+        // the built-in UBO members the shader references (BuiltinUniforms carries each one's kind /
+        // component count / source UBO+offset), laid out in the native blob in declaration order.
+        String combinedSource = vertexSource + "\n" + fragmentSource;
+        for (BuiltinUniforms.Entry entry : BuiltinUniforms.all()) {
+            if (!referencesName(combinedSource, entry.name())) {
+                continue;
+            }
+            ShaderField.Kind kind = entry.kind();
+            int componentCount = entry.componentCount();
             int alignment = getAlignment(kind, componentCount);
             int size = getSize(kind, componentCount);
             offset = align(offset, alignment);
-            fields.add(new ShaderField(uniform.getName(), uniform.getName(), kind,
-                componentCount, offset, size, -1));
+            fields.add(new ShaderField(entry.name(), entry.name(), kind, componentCount, offset,
+                size, -1));
             offset += size;
         }
 
-        List<String> resolvedSamplerNames = resolveSamplerNames(samplerNames, vertexSource,
+        List<String> resolvedSamplerNames = resolveSamplerNames(List.of(), vertexSource,
             fragmentSource);
         for (int i = 0; i < resolvedSamplerNames.size(); i++) {
             String samplerName = resolvedSamplerNames.get(i);
@@ -148,27 +148,8 @@ public final class ShaderRegistry {
         return fallbackSlot;
     }
 
-    private static int getComponentCount(int dataType) {
-        return switch (dataType) {
-            case 0, 4 -> 1;
-            case 1, 5 -> 2;
-            case 2, 6 -> 3;
-            case 3, 7 -> 4;
-            case 8 -> 2;
-            case 9 -> 3;
-            case 10 -> 4;
-            default -> throw new IllegalArgumentException("Unsupported uniform type: " + dataType);
-        };
-    }
-
-    private static ShaderField.Kind getKind(int dataType) {
-        if (dataType <= 3) {
-            return ShaderField.Kind.INT;
-        }
-        if (dataType <= 7) {
-            return ShaderField.Kind.FLOAT;
-        }
-        return ShaderField.Kind.MATRIX;
+    private static boolean referencesName(String source, String name) {
+        return Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source).find();
     }
 
     private static int getAlignment(ShaderField.Kind kind, int componentCount) {
