@@ -1,10 +1,13 @@
 package com.radiance.mixins.vulkan_render_integration;
 
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.radiance.client.proxy.vulkan.TextureProxy;
+import com.radiance.client.proxy.vulkan.UniformCapture;
+import java.nio.ByteBuffer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -45,5 +48,17 @@ public abstract class CommandEncoderMixins {
                 source.getWidth(), source.getHeight(), // width, height
                 mipLevel);                             // level
         }
+    }
+
+    /**
+     * Capture buffer uploads (the built-in UBOs) so the RenderPass draw interception can read the
+     * actual uniform values without a GPU readback (counterpart to the writeToTexture mirror above).
+     */
+    @Inject(
+        method = "writeToBuffer(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;Ljava/nio/ByteBuffer;)V",
+        at = @At("HEAD"))
+    private void radiance$captureWriteToBuffer(GpuBufferSlice destination, ByteBuffer data,
+        CallbackInfo ci) {
+        UniformCapture.capture(destination, data);
     }
 }
