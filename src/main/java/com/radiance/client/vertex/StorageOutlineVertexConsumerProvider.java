@@ -1,16 +1,21 @@
 package com.radiance.client.vertex;
 
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import java.util.Optional;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.render.VertexConsumers;
-import net.minecraft.util.math.ColorHelper;
+import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.util.ARGB;
 
+/**
+ * 26.2: no longer a {@code VertexConsumerProvider} (removed) -- a thin colored-outline wrapper over
+ * {@link StorageVertexConsumerProvider}, keyed on {@link RenderType}. The old union path
+ * ({@code VertexConsumers.union}) is gone in 26.2 and this class is currently only referenced by
+ * disabled (commented-out) outline code in {@code EntityProxy}; the affected-outline branch returns
+ * the primary consumer until the union is reintroduced with a 26.2 replacement.
+ */
 @Environment(EnvType.CLIENT)
-public class StorageOutlineVertexConsumerProvider implements VertexConsumerProvider {
+public class StorageOutlineVertexConsumerProvider {
 
     private final StorageVertexConsumerProvider parent;
     private int red = 255;
@@ -22,23 +27,18 @@ public class StorageOutlineVertexConsumerProvider implements VertexConsumerProvi
         this.parent = parent;
     }
 
-    @Override
-    public VertexConsumer getBuffer(RenderLayer renderLayer) {
-        if (renderLayer.isOutline()) {
-            VertexConsumer vertexConsumer = this.parent.getBuffer(renderLayer);
+    public VertexConsumer getBuffer(RenderType renderType) {
+        if (renderType.isOutline()) {
+            VertexConsumer vertexConsumer = this.parent.getBuffer(renderType);
             return new OutlineVertexConsumer(vertexConsumer, this.red, this.green, this.blue,
                 this.alpha);
         } else {
-            VertexConsumer vertexConsumer = this.parent.getBuffer(renderLayer);
-            Optional<RenderLayer> optional = renderLayer.getAffectedOutline();
+            VertexConsumer vertexConsumer = this.parent.getBuffer(renderType);
+            Optional<RenderType> optional = renderType.outline();
             if (optional.isPresent()) {
-                VertexConsumer vertexConsumer2 = this.parent.getBuffer(
-                    optional.get());
-                OutlineVertexConsumer
-                    outlineVertexConsumer =
-                    new OutlineVertexConsumer(vertexConsumer2, this.red, this.green, this.blue,
-                        this.alpha);
-                return VertexConsumers.union(outlineVertexConsumer, vertexConsumer);
+                // 26.2: VertexConsumers.union removed -- would combine the outline copy with the
+                // primary geometry. Returns the primary consumer until a replacement is wired in.
+                return vertexConsumer;
             } else {
                 return vertexConsumer;
             }
@@ -57,39 +57,48 @@ public class StorageOutlineVertexConsumerProvider implements VertexConsumerProvi
 
         public OutlineVertexConsumer(VertexConsumer delegate, int red, int green, int blue,
             int alpha) {
-            this(delegate, ColorHelper.getArgb(alpha, red, green, blue));
+            this(delegate, ARGB.color(alpha, red, green, blue));
         }
 
         @Override
-        public VertexConsumer vertex(float x, float y, float z) {
-            this.delegate.vertex(x, y, z)
-                .color(this.color);
+        public VertexConsumer addVertex(float x, float y, float z) {
+            this.delegate.addVertex(x, y, z).setColor(this.color);
             return this;
         }
 
         @Override
-        public VertexConsumer color(int red, int green, int blue, int alpha) {
+        public VertexConsumer setColor(int red, int green, int blue, int alpha) {
             return this;
         }
 
         @Override
-        public VertexConsumer texture(float u, float v) {
-            this.delegate.texture(u, v);
+        public VertexConsumer setColor(int color) {
             return this;
         }
 
         @Override
-        public VertexConsumer overlay(int u, int v) {
+        public VertexConsumer setUv(float u, float v) {
+            this.delegate.setUv(u, v);
             return this;
         }
 
         @Override
-        public VertexConsumer light(int u, int v) {
+        public VertexConsumer setUv1(int u, int v) {
             return this;
         }
 
         @Override
-        public VertexConsumer normal(float x, float y, float z) {
+        public VertexConsumer setUv2(int u, int v) {
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setNormal(float x, float y, float z) {
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setLineWidth(float width) {
             return this;
         }
     }

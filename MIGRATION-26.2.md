@@ -773,3 +773,38 @@ shader/render-pipeline subsystem.
     `MipmapGenerator.generateMipLevels(Identifier, NativeImage[], int, MipmapStrategy, …)`.
   - **block color** (`BlockColorsMixins`), **particles** (`ParticleManagerMixins`),
     **resource reload** (`ReloadableResourceManagerImplMixins`).
+
+## Entity / item / block-entity capture — the SubmitNodeCollector crux (design)
+
+The mod's old entity path (`EntityProxy` + `StorageVertexConsumerProvider` +
+per-renderer mixins: `EntityRenderDispatcherMixins`, `EntityRendererMixins`,
+`HeldItemRendererMixins`, `ItemRendererMixins`, `BannerBlockEntityRendererMixins`,
+`LightningEntityRendererMixins`, `ParticleManagerMixins`, `BillboardParticleMixins`)
+worked by **interposing a custom `VertexConsumerProvider`** (`StorageVertexConsumerProvider`,
+handing out `PBRVertexConsumer`/`BufferBuilder` per `RenderLayer` and reading the geometry
+back via `getLayers()`). That interception point **no longer exists in 26.2.**
+
+**26.2 model (deferred submit-node rendering):**
+- Entity/item/BE renderers no longer take a `MultiBufferSource`/`VertexConsumerProvider` and
+  no longer draw directly. They **submit deferred nodes** to a `SubmitNodeCollector`
+  (`submitModel`/`submitItem`/`submitBlockModel`/`submitShapeOutline`/`submitCustomGeometry`/
+  `submitQuadParticleGroup`/…, on `OrderedSubmitNodeCollector`).
+- `SubmitNodeStorage` (implements `SubmitNodeCollector`) buckets the nodes into per-order
+  `SubmitNodeCollection`s, each holding typed feature `Submit` objects
+  (`ModelFeatureRenderer.Submit`, `ItemFeatureRenderer.Submit`, …) grouped by phase.
+- `FeatureRenderDispatcher.renderAllFeatures(SubmitNodeStorage)` (driven from
+  `LevelRenderer`/`GameRenderer`) **drains** it: `prepareFrame` groups submits by phase, then
+  `PreparedFrame.executeSolid/executeTranslucent/executeOutline/executeTranslucentAfterTerrain/
+  executeAlwaysOnTop` render each phase.
+- Only at drain time does geometry become vertices: each feature renderer
+  (`RenderTypeFeatureRenderer`) obtains a `VertexConsumer` via
+  `getVertexBuilder(RenderType)` → `currentGroup().getVertexBuilder` →
+  **`StagedVertexBuffer.getVertexBuilder(draw)`**. `StagedVertexBuffer`
+  (`FeatureFrameContext.stagedVertexBuffer`) is the **single choke point** through which all
+  feature (entity/item/BE/particle) geometry flows — the 26.2 replacement for the old
+  per-`RenderLayer` `MultiBufferSource`.
+
+**Implication:** the capture must move from ~7 per-renderer VCP swaps to the one drain-point
+sink (`StagedVertexBuffer`), analogous to how the shader crux moved to `RenderPass.drawIndexed`.
+This is a redesign, not a port, and it structurally diverges from the 1.21.11 per-renderer
+approach (the engine change forces it — `VertexConsumerProvider` interception is gone).
