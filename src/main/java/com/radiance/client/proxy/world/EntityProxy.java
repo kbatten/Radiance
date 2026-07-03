@@ -30,15 +30,27 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.particle.Particle;
 import net.minecraft.client.renderer.SubmitNodeStorage;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.rendertype.PreparedRenderType;
 import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.core.BlockPos;
+import net.minecraft.util.ARGB;
+import net.minecraft.util.CommonColors;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.FishingHook;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.lwjgl.system.MemoryUtil;
 
 /**
@@ -280,6 +292,101 @@ public class EntityProxy {
         }
 
         queueBuild(entityStorageVertexConsumerProviders, entityRenderDataList);
+    }
+
+    /**
+     * Drains a submit-node storage through the game's {@link FeatureRenderDispatcher} while the given
+     * capture store is active, so all model geometry is routed into it (via the
+     * {@code RenderTypeFeatureRenderer} hook) instead of the vanilla staged buffer.
+     */
+    private static void radiance$drainCapture(SubmitNodeStorage submitNodeStorage,
+        StorageVertexConsumerProvider store) {
+        FeatureRenderDispatcher featureRenderDispatcher =
+            Minecraft.getInstance().gameRenderer.featureRenderDispatcher();
+        FeatureGeometryCapture.begin(store);
+        try {
+            featureRenderDispatcher.renderAllFeatures(submitNodeStorage);
+        } finally {
+            FeatureGeometryCapture.end();
+        }
+    }
+
+    /**
+     * 26.2: block entities follow the same submit-node drain as entities --
+     * {@link BlockEntityRenderDispatcher#tryExtractRenderState} + {@code submit} into a
+     * {@link SubmitNodeStorage}, drained with a per-BE capture store active. (Crumbling overlays are
+     * handled separately in {@link #queueCrumblingRebuild}.)
+     */
+    public static void queueBlockEntitiesRebuild(List<BlockEntity> blockEntities,
+        BlockEntityRenderDispatcher blockEntityRenderDispatcher, float tickDelta) {
+        PoseStack poseStack = new PoseStack();
+        CameraRenderState cameraRenderState = Minecraft.getInstance().gameRenderer.gameRenderState()
+            .levelRenderState.cameraRenderState;
+
+        List<StorageVertexConsumerProvider> entityStorageVertexConsumerProviders = new ArrayList<>();
+        EntityRenderDataList entityRenderDataList = new EntityRenderDataList();
+        for (BlockEntity blockEntity : blockEntities) {
+            var renderState = blockEntityRenderDispatcher.tryExtractRenderState(blockEntity,
+                tickDelta, null, false);
+            if (renderState == null) {
+                continue;
+            }
+
+            StorageVertexConsumerProvider store = new StorageVertexConsumerProvider(786432);
+            entityStorageVertexConsumerProviders.add(store);
+            SubmitNodeStorage submitNodeStorage = new SubmitNodeStorage();
+            blockEntityRenderDispatcher.submit(renderState, poseStack, submitNodeStorage,
+                cameraRenderState);
+            radiance$drainCapture(submitNodeStorage, store);
+
+            BlockPos blockPos = blockEntity.getBlockPos();
+            processWorldEntityRenderData(store, System.identityHashCode(blockEntity),
+                blockPos.getX(), blockPos.getY(), blockPos.getZ(), Constants.RayTracingFlags.WORLD,
+                true, entityRenderDataList);
+        }
+
+        queueBuild(entityStorageVertexConsumerProviders, entityRenderDataList);
+    }
+
+    /**
+     * 26.2: the targeted-block outline is now a submit node ({@code submitShapeOutline}) drained
+     * through {@code ShapeOutlineFeatureRenderer} (a {@code RenderTypeFeatureRenderer}), so the mod's
+     * capture hook picks up the line geometry. Submitted at origin; the block position is carried on
+     * the render data.
+     */
+    public static void queueTargetBlockOutlineRebuild(Camera camera, ClientLevel world) {
+        Minecraft client = Minecraft.getInstance();
+        List<StorageVertexConsumerProvider> storageVertexConsumerProviders = new ArrayList<>();
+        EntityRenderDataList entityRenderDataList = new EntityRenderDataList();
+
+        if (client.hitResult instanceof BlockHitResult blockHitResult
+            && blockHitResult.getType() != HitResult.Type.MISS) {
+            BlockPos blockPos = blockHitResult.getBlockPos();
+            BlockState blockState = world.getBlockState(blockPos);
+            if (!blockState.isAir() && world.getWorldBorder().isWithinBounds(blockPos)) {
+                boolean highContrast = client.options.highContrastBlockOutline().get();
+                // 26.2: no CommonColors.CYAN -> use the ARGB literal.
+                int color = highContrast ? 0xFF00FFFF : ARGB.color(102, CommonColors.BLACK);
+                Entity cameraEntity = camera.entity();
+                VoxelShape shape = blockState.getShape(world, blockPos,
+                    cameraEntity != null ? CollisionContext.of(cameraEntity)
+                        : CollisionContext.empty());
+
+                StorageVertexConsumerProvider store = new StorageVertexConsumerProvider(0);
+                storageVertexConsumerProviders.add(store);
+                SubmitNodeStorage submitNodeStorage = new SubmitNodeStorage();
+                submitNodeStorage.submitShapeOutline(new PoseStack(), shape, RenderTypes.lines(),
+                    color, 1.0F, false);
+                radiance$drainCapture(submitNodeStorage, store);
+
+                processWorldEntityRenderData(store, 0, blockPos.getX(), blockPos.getY(),
+                    blockPos.getZ(), Constants.RayTracingFlags.FISHING_BOBBER, false,
+                    entityRenderDataList);
+            }
+        }
+
+        queueBuild(storageVertexConsumerProviders, entityRenderDataList, 0.0075f,
+            Constants.Coordinates.WORLD, false);
     }
 
     public static void queueBuild(
