@@ -29,6 +29,7 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.particle.Particle;
+import net.minecraft.client.renderer.ItemInHandRenderer;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
@@ -387,6 +388,40 @@ public class EntityProxy {
 
         queueBuild(storageVertexConsumerProviders, entityRenderDataList, 0.0075f,
             Constants.Coordinates.WORLD, false);
+    }
+
+    /**
+     * 26.2: the first-person hand is a submit path too --
+     * {@link ItemInHandRenderer#submitHandsWithItems} into a {@link SubmitNodeStorage}, drained with
+     * capture active. Replaces the old {@code IHeldItemRendererExt.radiance$renderItem} VCP path.
+     */
+    public static void queueHandRebuild(float tickDelta, ItemInHandRenderer firstPersonRenderer,
+        float handProjectionScale) {
+        Minecraft client = Minecraft.getInstance();
+        if (client.player == null) {
+            return;
+        }
+
+        List<StorageVertexConsumerProvider> storageVertexConsumerProviders = new ArrayList<>();
+        EntityRenderDataList entityRenderDataList = new EntityRenderDataList();
+
+        StorageVertexConsumerProvider store = new StorageVertexConsumerProvider(8192);
+        storageVertexConsumerProviders.add(store);
+
+        PoseStack poseStack = new PoseStack();
+        poseStack.scale(handProjectionScale, handProjectionScale, 1.0F);
+        int light = client.getEntityRenderDispatcher()
+            .getPackedLightCoords(client.player, tickDelta);
+        SubmitNodeStorage submitNodeStorage = new SubmitNodeStorage();
+        firstPersonRenderer.submitHandsWithItems(tickDelta, poseStack, submitNodeStorage,
+            client.player, light);
+        radiance$drainCapture(submitNodeStorage, store);
+
+        processWorldEntityRenderData(store,
+            System.identityHashCode(Constants.RayTracingFlags.HAND), 0, 0, 0,
+            Constants.RayTracingFlags.HAND, true, entityRenderDataList);
+        queueBuild(storageVertexConsumerProviders, entityRenderDataList, 0.0f,
+            Constants.Coordinates.CAMERA, false);
     }
 
     public static void queueBuild(
