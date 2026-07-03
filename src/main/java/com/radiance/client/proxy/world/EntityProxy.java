@@ -16,11 +16,13 @@ import com.radiance.client.vertex.PBRVertexConsumer;
 import com.radiance.client.vertex.StorageVertexConsumerProvider;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IRenderTypeExt;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.SortedSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,6 +38,9 @@ import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.WeatherEffectRenderer;
+import net.minecraft.client.renderer.WorldBorderRenderer;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.rendertype.PreparedRenderType;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
@@ -46,6 +51,7 @@ import net.minecraft.util.CommonColors;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.FishingHook;
+import net.minecraft.server.level.BlockDestructionProgress;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
@@ -422,6 +428,48 @@ public class EntityProxy {
             Constants.RayTracingFlags.HAND, true, entityRenderDataList);
         queueBuild(storageVertexConsumerProviders, entityRenderDataList, 0.0f,
             Constants.Coordinates.CAMERA, false);
+    }
+
+    /**
+     * 26.2 TODO: block-breaking crumbling was rearchitected. It is now either
+     * {@code submitBreakingBlockModel(PoseStack, List&lt;BlockStateModelPart&gt;, int)} (which needs
+     * the block's model parts reconstructed) or a {@code ModelFeatureRenderer.CrumblingOverlay}
+     * folded into the block-entity/block {@code submit}; the old {@code BlockRenderManager
+     * .renderDamage(...)} into a VCP is gone (there is no {@code BlockRenderDispatcher} render-damage
+     * path to intercept). No-op until that capture is designed so the render loop is unaffected.
+     */
+    public static void queueCrumblingRebuild(Camera camera,
+        Long2ObjectMap<SortedSet<BlockDestructionProgress>> blockBreakingProgressions,
+        ClientLevel world) {
+        // no-op pending 26.2 crumbling-capture design (see javadoc)
+    }
+
+    /**
+     * 26.2 TODO: particles moved to {@code submitQuadParticleGroup} / {@code
+     * QuadParticleFeatureRenderer}, which writes the {@code StagedVertexBuffer} directly and so
+     * bypasses the {@code RenderTypeFeatureRenderer} capture hook. A dedicated capture point
+     * ({@code QuadParticleFeatureRenderer} or {@code StagedVertexBuffer.getVertexBuilder(Draw)}) is
+     * needed. No-op until then so the render loop is unaffected.
+     */
+    public static void queueParticleRebuild(Camera camera, float tickDelta, Frustum frustum) {
+        // no-op pending 26.2 particle-capture design (see javadoc)
+    }
+
+    /**
+     * 26.2 TODO: weather no longer renders through a {@code VertexConsumer} --
+     * {@code WeatherEffectRenderer.render(Vec3, WeatherRenderState)} tessellates rain/snow columns
+     * into a private {@code BufferBuilder}, uploads a GPU buffer and draws it to the weather render
+     * target. Capturing it needs either the column tessellation reimplemented into a
+     * {@link PBRVertexConsumer} (as the mod does for clouds) from {@code WeatherRenderState}'s public
+     * columns, or a hook on {@code WeatherEffectRenderer}. No-op until then.
+     */
+    public static void queueWeatherBuild(WeatherEffectRenderer weatherRendering,
+        WorldBorderRenderer worldBorderRendering,
+        ClientLevel world,
+        Camera camera,
+        int ticks,
+        float tickDelta) {
+        // no-op pending 26.2 weather-capture design (see javadoc)
     }
 
     public static void queueBuild(
