@@ -6,24 +6,30 @@ import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.math.Axis;
 import com.radiance.client.proxy.vulkan.BufferProxy;
+import com.radiance.client.proxy.world.ChunkProxy;
 import com.radiance.client.proxy.world.EntityProxy;
 import com.radiance.client.proxy.world.PlayerProxy;
+import com.radiance.mixin_related.extensions.vulkan_render_integration.IViewAreaExt;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.RotatingSectionStorage;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.CloudRenderer;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.ViewArea;
 import net.minecraft.client.renderer.blockentity.AbstractEndPortalRenderer;
+import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.client.renderer.fog.FogData;
 import net.minecraft.client.renderer.state.OptionsRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
+import net.minecraft.client.renderer.state.level.SectionUpdateRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.util.ARGB;
@@ -60,11 +66,16 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * culled here (preserving {@code identityHashCode(entity)}). Block-entity render states are transient,
  * so their identity is keyed on the (stable) block position inside {@link EntityProxy}.
  *
+ * <h3>Chunk terrain</h3>
+ * Cancelling {@code render} also skips {@code compileSections} (where MC would call
+ * {@code RenderSection.compileAsync}), so this hook enqueues the frame's dirty sections (the
+ * extractor's {@code sectionUpdateRenderStates}) into {@code ChunkProxy} and drains its native rebuild
+ * queue. The rest of the {@code ChunkProxy} lifecycle is driven by the ViewArea /
+ * SectionRenderDispatcher / RenderSection mixins.
+ *
  * <h3>Deferred</h3>
- * The chunk-terrain capture path ({@code ChunkProxy} against {@code ViewArea}/{@code
- * SectionRenderDispatcher}) plus particle/weather/crumbling capture are their own migration clusters
- * and are left as documented TODOs; the no-op {@code EntityProxy} stubs keep the render loop safe
- * until they land.
+ * Particle / weather / crumbling capture are their own migration clusters and are left as documented
+ * TODOs; the no-op {@code EntityProxy} stubs keep the render loop safe until they land.
  */
 @Mixin(LevelRenderer.class)
 public abstract class WorldRendererMixins {
@@ -72,6 +83,9 @@ public abstract class WorldRendererMixins {
     @Shadow
     @Final
     private CloudRenderer cloudRenderer;
+
+    @Shadow
+    public abstract ViewArea viewArea();
 
     @Inject(method = "render(Lcom/mojang/blaze3d/resource/GraphicsResourceAllocator;"
         + "Lnet/minecraft/client/DeltaTracker;Z"
@@ -193,7 +207,24 @@ public abstract class WorldRendererMixins {
                 levelRenderState.gameTime, partialTick);
         }
 
-        // 26.2 TODO: chunk-terrain capture path (ChunkProxy <-> ViewArea/SectionRenderDispatcher).
+        // ===================== Chunk terrain =====================
+        // LevelRenderer.render (cancelled below) is where compileSections would call
+        // RenderSection.compileAsync -> ChunkProxy.enqueueRebuild. Since we cancel it, enqueue this
+        // frame's dirty sections (the extractor's per-frame update set) into the mod's native rebuild
+        // pipeline, then drain the queue (build + upload to the Vulkan backend).
+        ViewArea viewArea = this.viewArea();
+        if (viewArea != null) {
+            RotatingSectionStorage<SectionRenderDispatcher.RenderSection> sections =
+                ((IViewAreaExt) viewArea).radiance$getSections();
+            for (SectionUpdateRenderState sectionUpdate : levelRenderState.sectionUpdateRenderStates) {
+                SectionRenderDispatcher.RenderSection section = sections.getValue(
+                    sectionUpdate.sectionNode());
+                if (section != null) {
+                    ChunkProxy.enqueueRebuild(section);
+                }
+            }
+        }
+        ChunkProxy.rebuild(gameRenderer.mainCamera());
 
         ci.cancel();
     }
