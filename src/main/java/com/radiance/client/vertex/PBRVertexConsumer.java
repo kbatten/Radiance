@@ -189,6 +189,14 @@ public class PBRVertexConsumer implements VertexConsumer {
             putInt(ptr + PBRVertexFormats.OFF_GLINT_TEXTURE, glintTextureID);
         }
 
+        // 26.2 PBR emission: block-model quads stash their emission on a thread-local while their
+        // vertices are written (see BlockModelRendererMixins). memSet already zeroed the channel, so
+        // only write when emissive.
+        float emission = BlockEmissionContext.get();
+        if (emission != 0.0F) {
+            MemoryUtil.memPutFloat(ptr + PBRVertexFormats.OFF_ALBEDO_EMISSION, emission);
+        }
+
         return ptr;
     }
 

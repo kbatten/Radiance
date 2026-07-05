@@ -93,4 +93,5 @@ public class PBRVertexFormats {
     public static final int OFF_USE_LIGHT = off("UseLight");
     public static final int OFF_LIGHT_UV = off("LightUV");
     public static final int OFF_POST_BASE = off("PostBase");
+    public static final int OFF_ALBEDO_EMISSION = off("AlbedoEmission");
 }

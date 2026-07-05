@@ -1,15 +1,14 @@
 package com.radiance.mixins.vulkan_render_integration;
 
-import com.radiance.client.vertex.PBRVertexConsumer;
+import com.radiance.client.vertex.BlockEmissionContext;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IBlockColorsExt;
-import net.minecraft.block.BlockState;
 import net.minecraft.client.color.block.BlockColors;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.block.BlockModelRenderer;
-import net.minecraft.client.render.model.BakedQuad;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.BlockRenderView;
+import net.minecraft.client.renderer.block.BlockAndTintGetter;
+import net.minecraft.client.renderer.block.BlockQuadOutput;
+import net.minecraft.client.renderer.block.ModelBlockRenderer;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -17,72 +16,48 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(BlockModelRenderer.class)
-public class BlockModelRendererMixins {
+/**
+ * 26.2 PBR block emission. The old mixin fully replaced {@code BlockModelRenderer.renderQuad} to
+ * recompute tint + emission and write them into the PBR vertex consumer. In 26.2 {@code renderQuad}
+ * is gone: block quads flow through {@code putQuadWithTint(output, ...)} ->
+ * {@code BlockQuadOutput.put} -> a per-section {@code PBRVertexConsumer} (supplied by
+ * {@code SectionBuilderMixins}), and tint is now applied natively
+ * ({@code quadInstance.multiplyColor}). The one thing the engine does not do is the mod's per-quad
+ * PBR emission.
+ *
+ * <p>The PBR consumer sits behind the {@code BlockQuadOutput} functional interface and is unreachable
+ * from here, so emission is bridged through {@link BlockEmissionContext}: this hook computes the
+ * quad's emission from the block-color extension and stashes it on a thread-local around the quad's
+ * {@code output.put}, and {@code PBRVertexConsumer.addVertex} writes it into the AlbedoEmission
+ * channel for the quad's four vertices. Cleared on TAIL so non-emissive geometry (fluids, the next
+ * quad, ...) never inherits a stale value.
+ */
+@Mixin(ModelBlockRenderer.class)
+public abstract class BlockModelRendererMixins {
 
-    @Final
     @Shadow
-    private BlockColors colors;
+    @Final
+    private BlockColors blockColors;
 
-    @Inject(method =
-        "renderQuad(Lnet/minecraft/world/BlockRenderView;Lnet/minecraft/block/BlockState;Lnet/minecraft/util/math/BlockPos;"
-            +
-            "Lnet/minecraft/client/render/VertexConsumer;Lnet/minecraft/client/util/math/MatrixStack$Entry;"
-            +
-            "Lnet/minecraft/client/render/model/BakedQuad;FFFFIIIII)V",
-        at = @At(value = "HEAD"),
-        cancellable = true)
-    public void redirectRenderQuad(BlockRenderView world,
-        BlockState state,
-        BlockPos pos,
-        VertexConsumer vertexConsumer,
-        MatrixStack.Entry matrixEntry,
-        BakedQuad quad,
-        float brightness0,
-        float brightness1,
-        float brightness2,
-        float brightness3,
-        int light0,
-        int light1,
-        int light2,
-        int light3,
-        int overlay,
-        CallbackInfo ci) {
-        float f;
-        float g;
-        float h;
-        float emission;
-        if (quad.hasTint()) {
-            int i = this.colors.getColor(state, world, pos, quad.getTintIndex());
-            f = (i >> 16 & 0xFF) / 255.0F;
-            g = (i >> 8 & 0xFF) / 255.0F;
-            h = (i & 0xFF) / 255.0F;
+    @Inject(method = "putQuadWithTint(Lnet/minecraft/client/renderer/block/BlockQuadOutput;FFF"
+        + "Lnet/minecraft/client/renderer/block/BlockAndTintGetter;"
+        + "Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/core/BlockPos;"
+        + "Lnet/minecraft/client/resources/model/geometry/BakedQuad;)V", at = @At("HEAD"))
+    private void setBlockEmission(BlockQuadOutput output, float x, float y, float z,
+        BlockAndTintGetter level, BlockState state, BlockPos pos, BakedQuad quad, CallbackInfo ci) {
+        int tintIndex = quad.materialInfo().tintIndex();
+        float emission = tintIndex != -1
+            ? ((IBlockColorsExt) this.blockColors).radiance$getEmission(state, level, pos, tintIndex)
+            : 0.0F;
+        BlockEmissionContext.set(emission);
+    }
 
-            emission = ((IBlockColorsExt) this.colors).radiance$getEmission(state, world, pos,
-                quad.getTintIndex());
-        } else {
-            f = 1.0F;
-            g = 1.0F;
-            h = 1.0F;
-
-            emission = 0.0F;
-        }
-
-        vertexConsumer.quad(matrixEntry,
-            quad,
-            new float[]{brightness0, brightness1, brightness2, brightness3},
-            f,
-            g,
-            h,
-            1.0F,
-            new int[]{light0, light1, light2, light3},
-            overlay,
-            true);
-
-        if (vertexConsumer instanceof PBRVertexConsumer pbrVertexConsumer) {
-            pbrVertexConsumer.albedoEmission(emission);
-        }
-
-        ci.cancel();
+    @Inject(method = "putQuadWithTint(Lnet/minecraft/client/renderer/block/BlockQuadOutput;FFF"
+        + "Lnet/minecraft/client/renderer/block/BlockAndTintGetter;"
+        + "Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/core/BlockPos;"
+        + "Lnet/minecraft/client/resources/model/geometry/BakedQuad;)V", at = @At("TAIL"))
+    private void clearBlockEmission(BlockQuadOutput output, float x, float y, float z,
+        BlockAndTintGetter level, BlockState state, BlockPos pos, BakedQuad quad, CallbackInfo ci) {
+        BlockEmissionContext.clear();
     }
 }
