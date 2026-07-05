@@ -34,6 +34,7 @@ import net.minecraft.client.particle.Particle;
 import net.minecraft.client.renderer.ItemInHandRenderer;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
+import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
@@ -319,26 +320,25 @@ public class EntityProxy {
     }
 
     /**
-     * 26.2: block entities follow the same submit-node drain as entities --
-     * {@link BlockEntityRenderDispatcher#tryExtractRenderState} + {@code submit} into a
-     * {@link SubmitNodeStorage}, drained with a per-BE capture store active. (Crumbling overlays are
-     * handled separately in {@link #queueCrumblingRebuild}.)
+     * 26.2: block entities are drained per-BE just like entities, but the 26.2 render hook no longer
+     * exposes raw {@link BlockEntity} instances -- the visible set has already been extracted into
+     * {@link BlockEntityRenderState}s on the level render state. So we submit each pre-extracted state
+     * directly ({@code BlockEntityRenderDispatcher.submit}) into a {@link SubmitNodeStorage}, drained
+     * with a per-BE capture store active. Because render states are transient per-frame objects (their
+     * identity hash is not stable across frames), the native per-object identity is keyed on the
+     * block's position instead. (Crumbling overlays now ride on the render state itself /
+     * {@code blockBreakingRenderStates}; see {@link #queueCrumblingRebuild}.)
      */
-    public static void queueBlockEntitiesRebuild(List<BlockEntity> blockEntities,
-        BlockEntityRenderDispatcher blockEntityRenderDispatcher, float tickDelta) {
+    public static void queueBlockEntitiesRebuild(
+        List<BlockEntityRenderState> blockEntityRenderStates,
+        CameraRenderState cameraRenderState) {
         PoseStack poseStack = new PoseStack();
-        CameraRenderState cameraRenderState = Minecraft.getInstance().gameRenderer.gameRenderState()
-            .levelRenderState.cameraRenderState;
+        BlockEntityRenderDispatcher blockEntityRenderDispatcher =
+            Minecraft.getInstance().getBlockEntityRenderDispatcher();
 
         List<StorageVertexConsumerProvider> entityStorageVertexConsumerProviders = new ArrayList<>();
         EntityRenderDataList entityRenderDataList = new EntityRenderDataList();
-        for (BlockEntity blockEntity : blockEntities) {
-            var renderState = blockEntityRenderDispatcher.tryExtractRenderState(blockEntity,
-                tickDelta, null, false);
-            if (renderState == null) {
-                continue;
-            }
-
+        for (BlockEntityRenderState renderState : blockEntityRenderStates) {
             StorageVertexConsumerProvider store = new StorageVertexConsumerProvider(786432);
             entityStorageVertexConsumerProviders.add(store);
             SubmitNodeStorage submitNodeStorage = new SubmitNodeStorage();
@@ -346,8 +346,8 @@ public class EntityProxy {
                 cameraRenderState);
             radiance$drainCapture(submitNodeStorage, store);
 
-            BlockPos blockPos = blockEntity.getBlockPos();
-            processWorldEntityRenderData(store, System.identityHashCode(blockEntity),
+            BlockPos blockPos = renderState.blockPos;
+            processWorldEntityRenderData(store, Long.hashCode(blockPos.asLong()),
                 blockPos.getX(), blockPos.getY(), blockPos.getZ(), Constants.RayTracingFlags.WORLD,
                 true, entityRenderDataList);
         }
