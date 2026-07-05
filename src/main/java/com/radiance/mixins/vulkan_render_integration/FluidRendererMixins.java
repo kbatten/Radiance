@@ -1,25 +1,24 @@
 package com.radiance.mixins.vulkan_render_integration;
 
-import static net.minecraft.client.render.block.FluidRenderer.shouldRenderSide;
-
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.LeavesBlock;
-import net.minecraft.block.TranslucentBlock;
-import net.minecraft.client.color.world.BiomeColors;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.block.FluidRenderer;
-import net.minecraft.client.texture.Sprite;
-import net.minecraft.fluid.Fluid;
-import net.minecraft.fluid.FluidState;
-import net.minecraft.registry.tag.FluidTags;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.shape.VoxelShape;
-import net.minecraft.util.shape.VoxelShapes;
-import net.minecraft.world.BlockRenderView;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import net.minecraft.client.renderer.block.BlockAndTintGetter;
+import net.minecraft.client.renderer.block.FluidModel;
+import net.minecraft.client.renderer.block.FluidRenderer;
+import net.minecraft.client.renderer.block.FluidStateModelSet;
+import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.util.ARGB;
+import net.minecraft.util.Mth;
+import net.minecraft.world.level.CardinalLighting;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.HalfTransparentBlock;
+import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -28,645 +27,324 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+/**
+ * 26.2 fluid capture with normals. Vanilla fluid geometry carries a constant up-normal (0,1,0) on
+ * every vertex, which is fine for raster shading but wrong for the mod's ray tracer (flat water,
+ * incorrect reflections). This mixin re-implements the fluid tessellation exactly as 26.2 vanilla
+ * does -- same faces, vertex order and UVs -- but computes a proper per-face normal (a slope normal
+ * from the four corner heights for the top surface, the face direction for the sides, and straight
+ * down for the bottom).
+ *
+ * <p>26.2 rearchitected FluidRenderer: {@code render(BlockRenderView, BlockPos, VertexConsumer, ...)}
+ * became {@code tesselate(BlockAndTintGetter, BlockPos, FluidRenderer.Output, ...)}, sprites/tint/
+ * layer now come from a {@link FluidModel} ({@code fluidModels.get(fluidState)}) rather than
+ * {@code lava/water/overlay} sprite fields, lighting from {@code level.cardinalLighting()} rather
+ * than {@code getBrightness}, and the vertex builder is obtained via {@code output.getBuilder(layer)}
+ * -- which is the per-section PBRVertexConsumer supplied by SectionBuilderMixins, so the fluid (with
+ * its normals) is captured for the Vulkan pipeline.
+ */
 @Mixin(FluidRenderer.class)
 public abstract class FluidRendererMixins {
 
+    @Shadow
     @Final
-    @Shadow
-    private Sprite[] lavaSprites;
-
-    @Final
-    @Shadow
-    private Sprite[] waterSprites;
+    public FluidStateModelSet fluidModels;
 
     @Shadow
-    private Sprite waterOverlaySprite;
-
-    @Shadow
-    private static boolean isSameFluid(FluidState a, FluidState b) {
-        return false;
+    private static boolean isNeighborSameFluid(FluidState a, FluidState b) {
+        throw new AssertionError();
     }
 
     @Shadow
-    private static boolean isSideCovered(Direction direction, float f, BlockState blockState) {
-        VoxelShape voxelShape = blockState.getCullingFace(direction.getOpposite());
-        if (voxelShape == VoxelShapes.empty()) {
-            return false;
-        } else if (voxelShape == VoxelShapes.fullCube()) {
-            boolean bl = f == 1.0F;
-            return direction != Direction.UP || bl;
-        } else {
-            VoxelShape voxelShape2 = VoxelShapes.cuboid(0.0, 0.0, 0.0, 1.0, f, 1.0);
-            return VoxelShapes.isSideCovered(voxelShape2, voxelShape, direction);
+    private static boolean isFaceOccludedByNeighbor(Direction direction, float height,
+        BlockState neighborState) {
+        throw new AssertionError();
+    }
+
+    @Shadow
+    public static boolean shouldRenderFace(FluidState fluidState, BlockState blockState,
+        Direction direction, FluidState neighborFluidState) {
+        throw new AssertionError();
+    }
+
+    @Shadow
+    private float getHeight(BlockAndTintGetter level, Fluid fluidType, BlockPos pos, BlockState state,
+        FluidState fluidState) {
+        throw new AssertionError();
+    }
+
+    @Shadow
+    private float calculateAverageHeight(BlockAndTintGetter level, Fluid fluidType, float heightSelf,
+        float height2, float height1, BlockPos cornerPos) {
+        throw new AssertionError();
+    }
+
+    @Shadow
+    private int getLightCoords(BlockAndTintGetter level, BlockPos pos) {
+        throw new AssertionError();
+    }
+
+    @Unique
+    private void radiance$vertex(VertexConsumer builder, float x, float y, float z, int color,
+        float u, float v, int light, float nx, float ny, float nz) {
+        builder.addVertex(x, y, z, color, u, v, OverlayTexture.NO_OVERLAY, light, nx, ny, nz);
+    }
+
+    /**
+     * Emits a quad (matching vanilla's winding) with an explicit front normal, and optionally a
+     * back-facing copy with a separate back normal.
+     */
+    @Unique
+    private void radiance$addFace(VertexConsumer builder,
+        float x0, float y0, float z0, float u0, float v0,
+        float x1, float y1, float z1, float u1, float v1,
+        float x2, float y2, float z2, float u2, float v2,
+        float x3, float y3, float z3, float u3, float v3,
+        int color, int light, boolean addBackFace,
+        float nx, float ny, float nz, float bnx, float bny, float bnz) {
+        radiance$vertex(builder, x0, y0, z0, color, u0, v0, light, nx, ny, nz);
+        radiance$vertex(builder, x1, y1, z1, color, u1, v1, light, nx, ny, nz);
+        radiance$vertex(builder, x2, y2, z2, color, u2, v2, light, nx, ny, nz);
+        radiance$vertex(builder, x3, y3, z3, color, u3, v3, light, nx, ny, nz);
+        if (addBackFace) {
+            radiance$vertex(builder, x0, y0, z0, color, u0, v0, light, bnx, bny, bnz);
+            radiance$vertex(builder, x3, y3, z3, color, u3, v3, light, bnx, bny, bnz);
+            radiance$vertex(builder, x2, y2, z2, color, u2, v2, light, bnx, bny, bnz);
+            radiance$vertex(builder, x1, y1, z1, color, u1, v1, light, bnx, bny, bnz);
         }
     }
 
-    @Shadow
-    private static boolean method_3344(Direction direction, float f, BlockState blockState) {
-        return false;
-    }
-
-    @Shadow
-    private static boolean isOppositeSideCovered(BlockState blockState, Direction direction) {
-        return false;
-    }
-
-    @Shadow
-    protected abstract float calculateFluidHeight(BlockRenderView world,
-        Fluid fluid,
-        float originHeight,
-        float northSouthHeight,
-        float eastWestHeight,
-        BlockPos pos);
-
-    @Shadow
-    protected abstract void addHeight(float[] weightedAverageHeight, float height);
-
-    @Shadow
-    protected abstract float getFluidHeight(BlockRenderView world, Fluid fluid, BlockPos pos);
-
-    @Shadow
-    protected abstract float getFluidHeight(BlockRenderView world, Fluid fluid, BlockPos pos,
-        BlockState blockState, FluidState fluidState);
-
-    @Shadow
-    protected abstract int getLight(BlockRenderView world, BlockPos pos);
-
-    @Unique
-    private void vertex(VertexConsumer vertexConsumer,
-        float x,
-        float y,
-        float z,
-        float red,
-        float green,
-        float blue,
-        float u,
-        float v,
-        int light,
-        float nx,
-        float ny,
-        float nz) {
-        vertexConsumer.vertex(x, y, z)
-            .color(red, green, blue, 1.0F)
-            .texture(u, v)
-            .light(light)
-            .normal(nx, ny, nz);
-    }
-
-    @Inject(method =
-        "render(Lnet/minecraft/world/BlockRenderView;Lnet/minecraft/util/math/BlockPos;" +
-            "Lnet/minecraft/client/render/VertexConsumer;Lnet/minecraft/block/BlockState;Lnet/minecraft/fluid/FluidState;)V",
-        at = @At(value = "HEAD"),
-        cancellable = true)
-    public void addNormalToVertex(BlockRenderView world,
-        BlockPos pos,
-        VertexConsumer vertexConsumer,
-        BlockState blockState,
-        FluidState fluidState,
-        CallbackInfo ci) {
-        boolean isLava = fluidState.isIn(FluidTags.LAVA);
-        Sprite[] fluidSprites = isLava ? this.lavaSprites : this.waterSprites;
-        int tintColor = isLava ? 16777215 : BiomeColors.getWaterColor(world, pos);
-        float red = (tintColor >> 16 & 0xFF) / 255.0F;
-        float green = (tintColor >> 8 & 0xFF) / 255.0F;
-        float blue = (tintColor & 0xFF) / 255.0F;
-
-        BlockState stateDown = world.getBlockState(pos.offset(Direction.DOWN));
+    @Inject(method = "tesselate(Lnet/minecraft/client/renderer/block/BlockAndTintGetter;"
+        + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/client/renderer/block/FluidRenderer$Output;"
+        + "Lnet/minecraft/world/level/block/state/BlockState;"
+        + "Lnet/minecraft/world/level/material/FluidState;)V", at = @At("HEAD"), cancellable = true)
+    public void tesselateWithNormals(BlockAndTintGetter level, BlockPos pos,
+        FluidRenderer.Output output, BlockState blockState, FluidState fluidState, CallbackInfo ci) {
+        BlockState stateDown = level.getBlockState(pos.relative(Direction.DOWN));
         FluidState fluidDown = stateDown.getFluidState();
-        BlockState stateUp = world.getBlockState(pos.offset(Direction.UP));
+        BlockState stateUp = level.getBlockState(pos.relative(Direction.UP));
         FluidState fluidUp = stateUp.getFluidState();
-        BlockState stateNorth = world.getBlockState(pos.offset(Direction.NORTH));
+        BlockState stateNorth = level.getBlockState(pos.relative(Direction.NORTH));
         FluidState fluidNorth = stateNorth.getFluidState();
-        BlockState stateSouth = world.getBlockState(pos.offset(Direction.SOUTH));
+        BlockState stateSouth = level.getBlockState(pos.relative(Direction.SOUTH));
         FluidState fluidSouth = stateSouth.getFluidState();
-        BlockState stateWest = world.getBlockState(pos.offset(Direction.WEST));
+        BlockState stateWest = level.getBlockState(pos.relative(Direction.WEST));
         FluidState fluidWest = stateWest.getFluidState();
-        BlockState stateEast = world.getBlockState(pos.offset(Direction.EAST));
+        BlockState stateEast = level.getBlockState(pos.relative(Direction.EAST));
         FluidState fluidEast = stateEast.getFluidState();
 
-        boolean renderTop = !isSameFluid(fluidState, fluidUp);
-        boolean
-            renderBottom =
-            shouldRenderSide(fluidState, blockState, Direction.DOWN, fluidDown) && !method_3344(
-                Direction.DOWN, 0.8888889F, stateDown);
-        boolean renderNorth = shouldRenderSide(fluidState, blockState, Direction.NORTH, fluidNorth);
-        boolean renderSouth = shouldRenderSide(fluidState, blockState, Direction.SOUTH, fluidSouth);
-        boolean renderWest = shouldRenderSide(fluidState, blockState, Direction.WEST, fluidWest);
-        boolean renderEast = shouldRenderSide(fluidState, blockState, Direction.EAST, fluidEast);
+        boolean renderUp = !isNeighborSameFluid(fluidState, fluidUp);
+        boolean renderDown = shouldRenderFace(fluidState, blockState, Direction.DOWN, fluidDown)
+            && !isFaceOccludedByNeighbor(Direction.DOWN, 0.8888889F, stateDown);
+        boolean renderNorth = shouldRenderFace(fluidState, blockState, Direction.NORTH, fluidNorth);
+        boolean renderSouth = shouldRenderFace(fluidState, blockState, Direction.SOUTH, fluidSouth);
+        boolean renderWest = shouldRenderFace(fluidState, blockState, Direction.WEST, fluidWest);
+        boolean renderEast = shouldRenderFace(fluidState, blockState, Direction.EAST, fluidEast);
 
-        if (renderTop || renderBottom || renderEast || renderWest || renderNorth || renderSouth) {
-            float lightDown = world.getBrightness(Direction.DOWN, true);
-            float lightUp = world.getBrightness(Direction.UP, true);
-            float lightNorth = world.getBrightness(Direction.NORTH, true);
-            float lightWest = world.getBrightness(Direction.WEST, true); // 用于侧面阴影计算
+        if (renderUp || renderDown || renderEast || renderWest || renderNorth || renderSouth) {
+            FluidModel model = this.fluidModels.get(fluidState);
+            VertexConsumer builder = output.getBuilder(model.layer());
+            int tintColor = model.tintSource() != null
+                ? model.tintSource().colorInWorld(blockState, level, pos)
+                : -1;
+            CardinalLighting lighting = level.cardinalLighting();
+            Fluid type = fluidState.getType();
 
-            Fluid fluid = fluidState.getFluid();
-            float currentHeight = this.getFluidHeight(world, fluid, pos, blockState, fluidState);
-            float heightNE;
-            float heightNW;
-            float heightSE;
-            float heightSW;
-
-            if (currentHeight >= 1.0F) {
-                heightNE = 1.0F;
-                heightNW = 1.0F;
-                heightSE = 1.0F;
-                heightSW = 1.0F;
+            float heightSelf = this.getHeight(level, type, pos, blockState, fluidState);
+            float heightNorthEast;
+            float heightNorthWest;
+            float heightSouthEast;
+            float heightSouthWest;
+            if (heightSelf >= 1.0F) {
+                heightNorthEast = 1.0F;
+                heightNorthWest = 1.0F;
+                heightSouthEast = 1.0F;
+                heightSouthWest = 1.0F;
             } else {
-                float hNorth = this.getFluidHeight(world, fluid, pos.north(), stateNorth,
-                    fluidNorth);
-                float hSouth = this.getFluidHeight(world, fluid, pos.south(), stateSouth,
-                    fluidSouth);
-                float hEast = this.getFluidHeight(world, fluid, pos.east(), stateEast, fluidEast);
-                float hWest = this.getFluidHeight(world, fluid, pos.west(), stateWest, fluidWest);
-
-                heightNE =
-                    this.calculateFluidHeight(world,
-                        fluid,
-                        currentHeight,
-                        hNorth,
-                        hEast,
-                        pos.offset(Direction.NORTH)
-                            .offset(Direction.EAST));
-                heightNW =
-                    this.calculateFluidHeight(world,
-                        fluid,
-                        currentHeight,
-                        hNorth,
-                        hWest,
-                        pos.offset(Direction.NORTH)
-                            .offset(Direction.WEST));
-                heightSE =
-                    this.calculateFluidHeight(world,
-                        fluid,
-                        currentHeight,
-                        hSouth,
-                        hEast,
-                        pos.offset(Direction.SOUTH)
-                            .offset(Direction.EAST));
-                heightSW =
-                    this.calculateFluidHeight(world,
-                        fluid,
-                        currentHeight,
-                        hSouth,
-                        hWest,
-                        pos.offset(Direction.SOUTH)
-                            .offset(Direction.WEST));
+                float heightNorth = this.getHeight(level, type, pos.north(), stateNorth, fluidNorth);
+                float heightSouth = this.getHeight(level, type, pos.south(), stateSouth, fluidSouth);
+                float heightEast = this.getHeight(level, type, pos.east(), stateEast, fluidEast);
+                float heightWest = this.getHeight(level, type, pos.west(), stateWest, fluidWest);
+                heightNorthEast = this.calculateAverageHeight(level, type, heightSelf, heightNorth,
+                    heightEast, pos.relative(Direction.NORTH).relative(Direction.EAST));
+                heightNorthWest = this.calculateAverageHeight(level, type, heightSelf, heightNorth,
+                    heightWest, pos.relative(Direction.NORTH).relative(Direction.WEST));
+                heightSouthEast = this.calculateAverageHeight(level, type, heightSelf, heightSouth,
+                    heightEast, pos.relative(Direction.SOUTH).relative(Direction.EAST));
+                heightSouthWest = this.calculateAverageHeight(level, type, heightSelf, heightSouth,
+                    heightWest, pos.relative(Direction.SOUTH).relative(Direction.WEST));
             }
 
             float x = pos.getX() & 15;
             float y = pos.getY() & 15;
             float z = pos.getZ() & 15;
-            float bottomYOffset = renderBottom ? 0.001F : 0.0F;
+            float bottomOffs = renderDown ? 0.001F : 0.0F;
 
-            // ==========================================
-            // 1. 渲染顶面 (Surface)
-            // ==========================================
-            if (renderTop && !method_3344(Direction.UP,
-                Math.min(Math.min(heightNW, heightSW), Math.min(heightSE, heightNE)), stateUp)) {
-                // 稍微调低一点避免 Z-Fighting
-                heightNW -= 0.001F;
-                heightSW -= 0.001F;
-                heightSE -= 0.001F;
-                heightNE -= 0.001F;
+            // ===== Top surface (slope normal from the four corner heights) =====
+            if (renderUp && !isFaceOccludedByNeighbor(Direction.UP,
+                Math.min(Math.min(heightNorthWest, heightSouthWest),
+                    Math.min(heightSouthEast, heightNorthEast)), stateUp)) {
+                heightNorthWest -= 0.001F;
+                heightSouthWest -= 0.001F;
+                heightSouthEast -= 0.001F;
+                heightNorthEast -= 0.001F;
 
-                Vec3d flowVector = fluidState.getVelocity(world, pos);
-                float u1, v1, u2, v2, u3, v3, u4, v4; // 对应四个角的UV
-
-                if (flowVector.x == 0.0 && flowVector.z == 0.0) {
-                    Sprite stillSprite = fluidSprites[0];
-                    u1 = stillSprite.getFrameU(0.0F);
-                    v1 = stillSprite.getFrameV(0.0F);
-                    u2 = u1;
-                    v2 = stillSprite.getFrameV(1.0F);
-                    u3 = stillSprite.getFrameU(1.0F);
-                    v3 = v2;
-                    u4 = u3;
-                    v4 = v1;
+                Vec3 flow = fluidState.getFlow(level, pos);
+                float u00;
+                float u01;
+                float u10;
+                float u11;
+                float v00;
+                float v01;
+                float v10;
+                float v11;
+                if (flow.x == 0.0 && flow.z == 0.0) {
+                    TextureAtlasSprite stillSprite = model.stillMaterial().sprite();
+                    u00 = stillSprite.getU0();
+                    v00 = stillSprite.getV0();
+                    u01 = u00;
+                    v01 = stillSprite.getV1();
+                    u10 = stillSprite.getU1();
+                    v10 = v01;
+                    u11 = u10;
+                    v11 = v00;
                 } else {
-                    Sprite flowSprite = fluidSprites[1];
-                    float angle =
-                        (float) MathHelper.atan2(flowVector.z, flowVector.x) - (float) (Math.PI
-                            / 2);
-                    float sin = MathHelper.sin(angle) * 0.25F;
-                    float cos = MathHelper.cos(angle) * 0.25F;
-
-                    u1 = flowSprite.getFrameU(0.5F + (-cos - sin));
-                    v1 = flowSprite.getFrameV(0.5F + (-cos + sin));
-                    u2 = flowSprite.getFrameU(0.5F + (-cos + sin));
-                    v2 = flowSprite.getFrameV(0.5F + (cos + sin));
-                    u3 = flowSprite.getFrameU(0.5F + (cos + sin));
-                    v3 = flowSprite.getFrameV(0.5F + (cos - sin));
-                    u4 = flowSprite.getFrameU(0.5F + (cos - sin));
-                    v4 = flowSprite.getFrameV(0.5F + (-cos - sin));
+                    float angle = (float) Mth.atan2(flow.z, flow.x) - (float) (Math.PI / 2);
+                    float s = Mth.sin(angle) * 0.25F;
+                    float c = Mth.cos(angle) * 0.25F;
+                    TextureAtlasSprite flowingSprite = model.flowingMaterial().sprite();
+                    u00 = flowingSprite.getU(0.5F + (-c - s));
+                    v00 = flowingSprite.getV(0.5F + (-c + s));
+                    u01 = flowingSprite.getU(0.5F + (-c + s));
+                    v01 = flowingSprite.getV(0.5F + (c + s));
+                    u10 = flowingSprite.getU(0.5F + (c + s));
+                    v10 = flowingSprite.getV(0.5F + (c - s));
+                    u11 = flowingSprite.getU(0.5F + (c - s));
+                    v11 = flowingSprite.getV(0.5F + (-c - s));
                 }
 
-                float uAvg = (u1 + u2 + u3 + u4) / 4.0F;
-                float vAvg = (v1 + v2 + v3 + v4) / 4.0F;
-                float animationDelta = fluidSprites[0].getAnimationFrameDelta();
-
-                u1 = MathHelper.lerp(animationDelta, u1, uAvg);
-                u2 = MathHelper.lerp(animationDelta, u2, uAvg);
-                u3 = MathHelper.lerp(animationDelta, u3, uAvg);
-                u4 = MathHelper.lerp(animationDelta, u4, uAvg);
-                v1 = MathHelper.lerp(animationDelta, v1, vAvg);
-                v2 = MathHelper.lerp(animationDelta, v2, vAvg);
-                v3 = MathHelper.lerp(animationDelta, v3, vAvg);
-                v4 = MathHelper.lerp(animationDelta, v4, vAvg);
-
-                int packedLight = this.getLight(world, pos);
-                float shadedRed = lightUp * red;
-                float shadedGreen = lightUp * green;
-                float shadedBlue = lightUp * blue;
-
-                // --- 法线计算 (顶面) ---
-                // 坐标系：NW(0,0), NE(1,0), SW(0,1), SE(1,1)
-                // X轴斜率贡献: (左 - 右) => (NW - NE) + (SW - SE)
-                // Z轴斜率贡献: (上 - 下) => (NW - SW) + (NE - SE)
-                float normalX = (heightNW - heightNE) + (heightSW - heightSE);
-                float normalZ = (heightNW - heightSW) + (heightNE - heightSE);
-                float normalY = 1.0F; // 基础垂直分量
-
-                // 归一化
-                float length = MathHelper.sqrt(
-                    normalX * normalX + normalY * normalY + normalZ * normalZ);
+                float normalX = (heightNorthWest - heightNorthEast)
+                    + (heightSouthWest - heightSouthEast);
+                float normalZ = (heightNorthWest - heightSouthWest)
+                    + (heightNorthEast - heightSouthEast);
+                float normalY = 1.0F;
+                float length = Mth.sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
                 normalX /= length;
                 normalY /= length;
                 normalZ /= length;
 
-                // 绘制顶面 (四个顶点)
-                // 0: NW (0, 0) -> heightNW
-                this.vertex(vertexConsumer,
-                    x + 0.0F,
-                    y + heightNW,
-                    z + 0.0F,
-                    shadedRed,
-                    shadedGreen,
-                    shadedBlue,
-                    u1,
-                    v1,
-                    packedLight,
-                    normalX,
-                    normalY,
-                    normalZ);
-                // 1: SW (0, 1) -> heightSW
-                this.vertex(vertexConsumer,
-                    x + 0.0F,
-                    y + heightSW,
-                    z + 1.0F,
-                    shadedRed,
-                    shadedGreen,
-                    shadedBlue,
-                    u2,
-                    v2,
-                    packedLight,
-                    normalX,
-                    normalY,
-                    normalZ);
-                // 2: SE (1, 1) -> heightSE
-                this.vertex(vertexConsumer,
-                    x + 1.0F,
-                    y + heightSE,
-                    z + 1.0F,
-                    shadedRed,
-                    shadedGreen,
-                    shadedBlue,
-                    u3,
-                    v3,
-                    packedLight,
-                    normalX,
-                    normalY,
-                    normalZ);
-                // 3: NE (1, 0) -> heightNE
-                this.vertex(vertexConsumer,
-                    x + 1.0F,
-                    y + heightNE,
-                    z + 0.0F,
-                    shadedRed,
-                    shadedGreen,
-                    shadedBlue,
-                    u4,
-                    v4,
-                    packedLight,
-                    normalX,
-                    normalY,
-                    normalZ);
-
-                if (fluidState.canFlowTo(world, pos.up())) {
-                    // 绘制内顶面 (Backface)，法线取反
-                    this.vertex(vertexConsumer,
-                        x + 0.0F,
-                        y + heightNW,
-                        z + 0.0F,
-                        shadedRed,
-                        shadedGreen,
-                        shadedBlue,
-                        u1,
-                        v1,
-                        packedLight,
-                        -normalX,
-                        -normalY,
-                        -normalZ);
-                    this.vertex(vertexConsumer,
-                        x + 1.0F,
-                        y + heightNE,
-                        z + 0.0F,
-                        shadedRed,
-                        shadedGreen,
-                        shadedBlue,
-                        u4,
-                        v4,
-                        packedLight,
-                        -normalX,
-                        -normalY,
-                        -normalZ);
-                    this.vertex(vertexConsumer,
-                        x + 1.0F,
-                        y + heightSE,
-                        z + 1.0F,
-                        shadedRed,
-                        shadedGreen,
-                        shadedBlue,
-                        u3,
-                        v3,
-                        packedLight,
-                        -normalX,
-                        -normalY,
-                        -normalZ);
-                    this.vertex(vertexConsumer,
-                        x + 0.0F,
-                        y + heightSW,
-                        z + 1.0F,
-                        shadedRed,
-                        shadedGreen,
-                        shadedBlue,
-                        u2,
-                        v2,
-                        packedLight,
-                        -normalX,
-                        -normalY,
-                        -normalZ);
-                }
+                int topColor = ARGB.scaleRGB(tintColor, lighting.up());
+                int topLight = this.getLightCoords(level, pos);
+                radiance$addFace(builder,
+                    x + 0.0F, y + heightNorthWest, z + 0.0F, u00, v00,
+                    x + 0.0F, y + heightSouthWest, z + 1.0F, u01, v01,
+                    x + 1.0F, y + heightSouthEast, z + 1.0F, u10, v10,
+                    x + 1.0F, y + heightNorthEast, z + 0.0F, u11, v11,
+                    topColor, topLight, fluidState.shouldRenderBackwardUpFace(level, pos.above()),
+                    normalX, normalY, normalZ, -normalX, -normalY, -normalZ);
             }
 
-            // ==========================================
-            // 2. 渲染底面 (Bottom)
-            // ==========================================
-            if (renderBottom) {
-                float minU = fluidSprites[0].getMinU();
-                float maxU = fluidSprites[0].getMaxU();
-                float minV = fluidSprites[0].getMinV();
-                float maxV = fluidSprites[0].getMaxV();
-
-                int packedLightDown = this.getLight(world, pos.down());
-                float shadedRedDown = lightDown * red;
-                float shadedGreenDown = lightDown * green;
-                float shadedBlueDown = lightDown * blue;
-
-                // 法线向下 (0, -1, 0)
-                this.vertex(vertexConsumer,
-                    x,
-                    y + bottomYOffset,
-                    z + 1.0F,
-                    shadedRedDown,
-                    shadedGreenDown,
-                    shadedBlueDown,
-                    minU,
-                    maxV,
-                    packedLightDown,
-                    0.0F,
-                    -1.0F,
-                    0.0F);
-                this.vertex(vertexConsumer,
-                    x,
-                    y + bottomYOffset,
-                    z,
-                    shadedRedDown,
-                    shadedGreenDown,
-                    shadedBlueDown,
-                    minU,
-                    minV,
-                    packedLightDown,
-                    0.0F,
-                    -1.0F,
-                    0.0F);
-                this.vertex(vertexConsumer,
-                    x + 1.0F,
-                    y + bottomYOffset,
-                    z,
-                    shadedRedDown,
-                    shadedGreenDown,
-                    shadedBlueDown,
-                    maxU,
-                    minV,
-                    packedLightDown,
-                    0.0F,
-                    -1.0F,
-                    0.0F);
-                this.vertex(vertexConsumer,
-                    x + 1.0F,
-                    y + bottomYOffset,
-                    z + 1.0F,
-                    shadedRedDown,
-                    shadedGreenDown,
-                    shadedBlueDown,
-                    maxU,
-                    maxV,
-                    packedLightDown,
-                    0.0F,
-                    -1.0F,
-                    0.0F);
+            // ===== Bottom (normal straight down) =====
+            if (renderDown) {
+                TextureAtlasSprite stillSprite = model.stillMaterial().sprite();
+                float u0 = stillSprite.getU0();
+                float u1 = stillSprite.getU1();
+                float v0 = stillSprite.getV0();
+                float v1 = stillSprite.getV1();
+                int belowColor = ARGB.scaleRGB(tintColor, lighting.down());
+                int belowLight = this.getLightCoords(level, pos.below());
+                radiance$addFace(builder,
+                    x, y + bottomOffs, z, u0, v0,
+                    x + 1.0F, y + bottomOffs, z, u1, v0,
+                    x + 1.0F, y + bottomOffs, z + 1.0F, u1, v1,
+                    x, y + bottomOffs, z + 1.0F, u0, v1,
+                    belowColor, belowLight, false,
+                    0.0F, -1.0F, 0.0F, 0.0F, -1.0F, 0.0F);
             }
 
-            int packedLightCenter = this.getLight(world, pos);
-
-            // ==========================================
-            // 3. 渲染侧面 (Sides)
-            // ==========================================
-            for (Direction direction : Direction.Type.HORIZONTAL) {
-                float yStart, yEnd, xStart, xEnd, zStart, zEnd;
-                boolean shouldRenderSide;
-
-                switch (direction) {
+            // ===== Sides (normal = face direction) =====
+            int sideLight = this.getLightCoords(level, pos);
+            for (Direction faceDir : Direction.Plane.HORIZONTAL) {
+                float hh0;
+                float hh1;
+                float x0;
+                float z0;
+                float x1;
+                float z1;
+                boolean renderCondition;
+                BlockState faceState;
+                switch (faceDir) {
                     case NORTH:
-                        yStart = heightNW;
-                        yEnd = heightNE;
-                        xStart = x;
-                        xEnd = x + 1.0F;
-                        zStart = z + 0.001F;
-                        zEnd = z + 0.001F;
-                        shouldRenderSide = renderNorth;
+                        hh0 = heightNorthWest;
+                        hh1 = heightNorthEast;
+                        x0 = x;
+                        x1 = x + 1.0F;
+                        z0 = z + 0.001F;
+                        z1 = z + 0.001F;
+                        renderCondition = renderNorth;
+                        faceState = stateNorth;
                         break;
                     case SOUTH:
-                        yStart = heightSE;
-                        yEnd = heightSW;
-                        xStart = x + 1.0F;
-                        xEnd = x;
-                        zStart = z + 1.0F - 0.001F;
-                        zEnd = z + 1.0F - 0.001F;
-                        shouldRenderSide = renderSouth;
+                        hh0 = heightSouthEast;
+                        hh1 = heightSouthWest;
+                        x0 = x + 1.0F;
+                        x1 = x;
+                        z0 = z + 1.0F - 0.001F;
+                        z1 = z + 1.0F - 0.001F;
+                        renderCondition = renderSouth;
+                        faceState = stateSouth;
                         break;
                     case WEST:
-                        yStart = heightSW;
-                        yEnd = heightNW;
-                        xStart = x + 0.001F;
-                        xEnd = x + 0.001F;
-                        zStart = z + 1.0F;
-                        zEnd = z;
-                        shouldRenderSide = renderWest;
+                        hh0 = heightSouthWest;
+                        hh1 = heightNorthWest;
+                        x0 = x + 0.001F;
+                        x1 = x + 0.001F;
+                        z0 = z + 1.0F;
+                        z1 = z;
+                        renderCondition = renderWest;
+                        faceState = stateWest;
                         break;
                     default: // EAST
-                        yStart = heightNE;
-                        yEnd = heightSE;
-                        xStart = x + 1.0F - 0.001F;
-                        xEnd = x + 1.0F - 0.001F;
-                        zStart = z;
-                        zEnd = z + 1.0F;
-                        shouldRenderSide = renderEast;
+                        hh0 = heightNorthEast;
+                        hh1 = heightSouthEast;
+                        x0 = x + 1.0F - 0.001F;
+                        x1 = x + 1.0F - 0.001F;
+                        z0 = z;
+                        z1 = z + 1.0F;
+                        renderCondition = renderEast;
+                        faceState = stateEast;
                 }
 
-                if (shouldRenderSide && !method_3344(direction, Math.max(yStart, yEnd),
-                    world.getBlockState(pos.offset(direction)))) {
-                    BlockPos sidePos = pos.offset(direction);
-                    Sprite sideSprite = fluidSprites[1];
-                    if (!isLava) {
-                        Block
-                            sideBlock =
-                            world.getBlockState(sidePos)
-                                .getBlock();
-                        if (sideBlock instanceof TranslucentBlock
-                            || sideBlock instanceof LeavesBlock) {
-                            sideSprite = this.waterOverlaySprite;
+                if (renderCondition
+                    && !isFaceOccludedByNeighbor(faceDir, Math.max(hh0, hh1), faceState)) {
+                    TextureAtlasSprite sprite = model.flowingMaterial().sprite();
+                    boolean isOverlay = false;
+                    if (model.overlayMaterial() != null) {
+                        Block relativeBlock = faceState.getBlock();
+                        if (relativeBlock instanceof HalfTransparentBlock
+                            || relativeBlock instanceof LeavesBlock) {
+                            sprite = model.overlayMaterial().sprite();
+                            isOverlay = true;
                         }
                     }
 
-                    float uStart = sideSprite.getFrameU(0.0F);
-                    float uCenter = sideSprite.getFrameU(0.5F);
-                    float vStart = sideSprite.getFrameV((1.0F - yStart) * 0.5F);
-                    float vEnd = sideSprite.getFrameV((1.0F - yEnd) * 0.5F);
-                    float vCenter = sideSprite.getFrameV(0.5F);
-
-                    // MC 使用 lightNorth (0.8) 或 lightWest (0.6) 模拟侧面阴影
-                    float sideDimming =
-                        direction.getAxis() == Direction.Axis.Z ? lightNorth : lightWest;
-                    float sideRed = lightUp * sideDimming * red;
-                    float sideGreen = lightUp * sideDimming * green;
-                    float sideBlue = lightUp * sideDimming * blue;
-
-                    // 侧面法线
-                    float dirX = (float) direction.getOffsetX();
-                    float dirY = (float) direction.getOffsetY(); // 0
-                    float dirZ = (float) direction.getOffsetZ();
-
-                    this.vertex(vertexConsumer,
-                        xStart,
-                        y + yStart,
-                        zStart,
-                        sideRed,
-                        sideGreen,
-                        sideBlue,
-                        uStart,
-                        vStart,
-                        packedLightCenter,
-                        dirX,
-                        dirY,
-                        dirZ);
-                    this.vertex(vertexConsumer,
-                        xEnd,
-                        y + yEnd,
-                        zEnd,
-                        sideRed,
-                        sideGreen,
-                        sideBlue,
-                        uCenter,
-                        vEnd,
-                        packedLightCenter,
-                        dirX,
-                        dirY,
-                        dirZ);
-                    this.vertex(vertexConsumer,
-                        xEnd,
-                        y + bottomYOffset,
-                        zEnd,
-                        sideRed,
-                        sideGreen,
-                        sideBlue,
-                        uCenter,
-                        vCenter,
-                        packedLightCenter,
-                        dirX,
-                        dirY,
-                        dirZ);
-                    this.vertex(vertexConsumer,
-                        xStart,
-                        y + bottomYOffset,
-                        zStart,
-                        sideRed,
-                        sideGreen,
-                        sideBlue,
-                        uStart,
-                        vCenter,
-                        packedLightCenter,
-                        dirX,
-                        dirY,
-                        dirZ);
-
-                    if (sideSprite != this.waterOverlaySprite) {
-                        // 双面渲染（通常用于查看背面时），法线保持几何方向或取反均可。
-                        // 这里为了保持光照一致性，通常使用与面朝向相同的法线。
-                        this.vertex(vertexConsumer,
-                            xStart,
-                            y + bottomYOffset,
-                            zStart,
-                            sideRed,
-                            sideGreen,
-                            sideBlue,
-                            uStart,
-                            vCenter,
-                            packedLightCenter,
-                            dirX,
-                            dirY,
-                            dirZ);
-                        this.vertex(vertexConsumer,
-                            xEnd,
-                            y + bottomYOffset,
-                            zEnd,
-                            sideRed,
-                            sideGreen,
-                            sideBlue,
-                            uCenter,
-                            vCenter,
-                            packedLightCenter,
-                            dirX,
-                            dirY,
-                            dirZ);
-                        this.vertex(vertexConsumer,
-                            xEnd,
-                            y + yEnd,
-                            zEnd,
-                            sideRed,
-                            sideGreen,
-                            sideBlue,
-                            uCenter,
-                            vEnd,
-                            packedLightCenter,
-                            dirX,
-                            dirY,
-                            dirZ);
-                        this.vertex(vertexConsumer,
-                            xStart,
-                            y + yStart,
-                            zStart,
-                            sideRed,
-                            sideGreen,
-                            sideBlue,
-                            uStart,
-                            vStart,
-                            packedLightCenter,
-                            dirX,
-                            dirY,
-                            dirZ);
-                    }
+                    float u0 = sprite.getU(0.0F);
+                    float u1 = sprite.getU(0.5F);
+                    float v01 = sprite.getV((1.0F - hh0) * 0.5F);
+                    float v02 = sprite.getV((1.0F - hh1) * 0.5F);
+                    float v1 = sprite.getV(0.5F);
+                    float shadeSide = faceDir.getAxis() == Direction.Axis.Z
+                        ? lighting.north() : lighting.west();
+                    int faceColor = ARGB.scaleRGB(tintColor, lighting.up() * shadeSide);
+                    float dirX = faceDir.getStepX();
+                    float dirZ = faceDir.getStepZ();
+                    radiance$addFace(builder,
+                        x0, y + hh0, z0, u0, v01,
+                        x1, y + hh1, z1, u1, v02,
+                        x1, y + bottomOffs, z1, u1, v1,
+                        x0, y + bottomOffs, z0, u0, v1,
+                        faceColor, sideLight, !isOverlay,
+                        dirX, 0.0F, dirZ, dirX, 0.0F, dirZ);
                 }
             }
         }
