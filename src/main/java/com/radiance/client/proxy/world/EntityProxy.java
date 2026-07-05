@@ -275,6 +275,12 @@ public class EntityProxy {
             entityStorageVertexConsumerProviders.add(entityStorageVertexConsumerProvider);
 
             EntityRenderState renderState = entityRenderDispatcher.extractEntity(entity, tickDelta);
+            // 26.2: suppress the vanilla planar blob shadow (the RT pipeline does real shadows).
+            // renderShadow() is gone -- shadows are now submitted from the render state's
+            // shadowPieces, so clearing them here stops submitShadow() from emitting blob geometry
+            // into our capture drain. Collapses the old EntityRenderDispatcherMixins.cancelRenderShadow.
+            renderState.shadowPieces.clear();
+            renderState.shadowRadius = 0.0F;
             SubmitNodeStorage submitNodeStorage = new SubmitNodeStorage();
             entityRenderDispatcher.submit(renderState, cameraRenderState, 0, 0, 0, poseStack,
                 submitNodeStorage);
