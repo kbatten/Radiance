@@ -24,13 +24,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.SortedSet;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.particle.Particle;
 import net.minecraft.client.renderer.ItemInHandRenderer;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
@@ -79,8 +76,6 @@ import org.lwjgl.system.MemoryUtil;
  * still being migrated. They will be reintroduced alongside their caller mixins.
  */
 public class EntityProxy {
-
-    public static final ConcurrentMap<Class<? extends Particle>, AtomicInteger> PARTICLE_COUNTERS = new ConcurrentHashMap<>();
 
     private static final String WEATHER_DEFAULT_CONTENT = "/weather/default";
     private static final String PARTICLE_DEFAULT_CONTENT = "/particle/default";

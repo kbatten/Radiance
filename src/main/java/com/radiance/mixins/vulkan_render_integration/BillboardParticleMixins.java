@@ -1,73 +1,31 @@
 package com.radiance.mixins.vulkan_render_integration;
 
-import net.minecraft.client.particle.BillboardParticle;
+import net.minecraft.client.particle.SingleQuadParticle;
 import net.minecraft.client.particle.WhiteAshParticle;
-import net.minecraft.client.render.VertexConsumer;
-import org.joml.Quaternionf;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.Redirect;
 
-@Mixin(BillboardParticle.class)
+/**
+ * 26.2: BillboardParticle became {@link SingleQuadParticle}, and its per-vertex quad build
+ * ({@code method_60374}/{@code method_60375} into a {@code VertexConsumer}) was replaced by a single
+ * {@code QuadParticleRenderState.add(...)} call inside {@code extractRotatedQuad}, sized from
+ * {@code getQuadSize(partialTick)}. The old mixin hand-built a fixed +/-1/8 quad for WhiteAsh; the
+ * equivalent 26.2 hook is to pin {@code getQuadSize} to that fixed extent for WhiteAsh, which the
+ * render-state quad build then uses.
+ */
+@Mixin(SingleQuadParticle.class)
 public abstract class BillboardParticleMixins {
 
-    @Inject(method = "method_60374(Lnet/minecraft/client/render/VertexConsumer;Lorg/joml/Quaternionf;FFFF)V",
-        at = @At(value = "HEAD"),
-        cancellable = true)
-    public void resizeParticle(VertexConsumer vertexConsumer,
-        Quaternionf quaternionf,
-        float f,
-        float g,
-        float h,
-        float i,
-        CallbackInfo ci) {
-        if (((BillboardParticle) (Object) this) instanceof WhiteAshParticle) {
-            float j = this.getSize(i);
-            float k = this.getMinU();
-            float l = this.getMaxU();
-            float m = this.getMinV();
-            float n = this.getMaxV();
-            int o = 0;
-            this.method_60375(vertexConsumer, quaternionf, f, g, h, 1.0F / 8.0F, -1.0F / 8.0F, j, l,
-                n, o);
-            this.method_60375(vertexConsumer, quaternionf, f, g, h, 1.0F / 8.0F, 1.0F / 8.0F, j, l,
-                m, o);
-            this.method_60375(vertexConsumer, quaternionf, f, g, h, -1.0F / 8.0F, 1.0F / 8.0F, j, k,
-                m, o);
-            this.method_60375(vertexConsumer, quaternionf, f, g, h, -1.0F / 8.0F, -1.0F / 8.0F, j,
-                k, n, o);
-
-            ci.cancel();
+    @Redirect(method = "extractRotatedQuad(Lnet/minecraft/client/renderer/state/level/"
+        + "QuadParticleRenderState;Lorg/joml/Quaternionf;FFFF)V",
+        at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/particle/SingleQuadParticle;getQuadSize(F)F"))
+    private float radiance$fixWhiteAshSize(SingleQuadParticle instance, float partialTickTime) {
+        if (instance instanceof WhiteAshParticle) {
+            // Preserve the old fixed-size WhiteAsh override (was a hand-built +/-1/8 quad).
+            return 0.125F;
         }
+        return instance.getQuadSize(partialTickTime);
     }
-
-    @Shadow
-    public abstract float getSize(float i);
-
-    @Shadow
-    protected abstract float getMinU();
-
-    @Shadow
-    protected abstract float getMaxU();
-
-    @Shadow
-    protected abstract float getMinV();
-
-    @Shadow
-    protected abstract float getMaxV();
-
-    @Shadow
-    protected abstract void method_60375(VertexConsumer vertexConsumer,
-        Quaternionf quaternionf,
-        float f,
-        float g,
-        float h,
-        float i,
-        float j,
-        float k,
-        float l,
-        float m,
-        int n);
 }
