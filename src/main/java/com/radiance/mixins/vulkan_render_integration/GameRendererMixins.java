@@ -1,199 +1,97 @@
 package com.radiance.mixins.vulkan_render_integration;
 
-import com.llamalad7.mixinextras.sugar.Local;
 import com.radiance.client.proxy.vulkan.BufferProxy;
 import com.radiance.client.proxy.vulkan.RendererProxy;
 import com.radiance.client.proxy.world.EntityProxy;
-import com.radiance.mixin_related.extensions.vulkan_render_integration.IGameRendererExt;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.hud.InGameOverlayRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gl.Framebuffer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.render.BufferBuilderStorage;
-import net.minecraft.client.render.Camera;
-import net.minecraft.client.render.GameRenderer;
-import net.minecraft.client.render.LightmapTextureManager;
-import net.minecraft.client.util.BufferAllocator;
-import net.minecraft.client.render.RenderTickCounter;
-import net.minecraft.client.render.WorldRenderer;
-import net.minecraft.client.render.item.HeldItemRenderer;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.util.ObjectAllocator;
-import net.minecraft.client.util.Pool;
-import net.minecraft.client.util.math.MatrixStack;
-import com.mojang.blaze3d.systems.ProjectionType;
-import org.joml.Matrix4f;
-import org.joml.Matrix4fStack;
+import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.client.renderer.ItemInHandRenderer;
+import net.minecraft.client.renderer.state.GameRenderState;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
 import org.joml.Matrix4fc;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.Shadow;
-import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+/**
+ * 26.2 render-loop driver (partner of {@code WorldRendererMixins}). GameRenderer was rearchitected
+ * around the frame graph: {@code renderWorld} became {@link GameRenderer#renderLevel} (which builds
+ * the clean {@code modelViewMatrix} and calls {@code levelRenderer.render}), the blur is now a post
+ * chain ({@code processBlurEffect}), the hand submits through {@code renderItemInHand} +
+ * {@code FeatureRenderDispatcher}, and the old {@code Framebuffer.beginWrite} present path is gone
+ * (the main render target is driven by {@code createCommandEncoder}/the frame graph).
+ *
+ * <p>This mixin keeps only the hooks that still have a live target:
+ * <ul>
+ *   <li>blur takeover ({@code processBlurEffect});</li>
+ *   <li>first-person hand capture ({@code renderItemInHand} -&gt;
+ *       {@link EntityProxy#queueHandRebuild});</li>
+ *   <li>native frame finalize at {@code renderLevel} TAIL ({@link EntityProxy#build()} +
+ *       {@code RendererProxy.fuseWorld()}), after both the world ({@code levelRenderer.render}) and
+ *       hand queueing;</li>
+ *   <li>per-frame world-render gate at {@code render} HEAD.</li>
+ * </ul>
+ *
+ * <p>Dropped as no-longer-applicable in 26.2: the B*V matrix redirects (the clean modelViewMatrix is
+ * now read directly in {@code WorldRendererMixins}, so {@code IGameRendererExt} /
+ * {@code radiance$getRotationMatrix} is no longer needed), the {@code Framebuffer.beginWrite} cancels,
+ * the first-person overlay GUI-reprojection (screen effects now submit-drain inside {@code
+ * renderLevel}; capture is a TODO), and the world-icon screenshot redirect.
+ */
 @Mixin(GameRenderer.class)
-public abstract class GameRendererMixins implements IGameRendererExt {
+public abstract class GameRendererMixins {
 
     @Shadow
     @Final
-    public HeldItemRenderer firstPersonRenderer;
-    @Mutable
-    @Final
-    @Shadow
-    private LightmapTextureManager lightmapTextureManager;
-    @Final
-    @Shadow
-    private MinecraftClient client;
-    @Final
-    @Shadow
-    private Pool pool;
-    @Shadow
-    @Final
-    private BufferBuilderStorage buffers;
-    @Shadow
-    @Final
-    private Camera camera;
-    @Unique
-    private Matrix4f viewMatrix;
+    public ItemInHandRenderer itemInHandRenderer;
 
     @Shadow
-    public abstract Matrix4f getBasicProjectionMatrix(float fovDegrees);
+    @Final
+    private GameRenderState gameRenderState;
 
-    @Shadow
-    protected abstract float getFov(Camera camera, float tickDelta, boolean changingFov);
-
-    @Inject(method = "renderBlur()V", at = @At(value = "HEAD"), cancellable = true)
+    @Inject(method = "processBlurEffect()V", at = @At(value = "HEAD"), cancellable = true)
     public void redirectRenderBlur(CallbackInfo ci) {
-        float f = this.client.options.getMenuBackgroundBlurrinessValue();
-
-        //if (this.client.world == null && this.client.currentScreen != null && !(f < 1.0F)) {
-        if (!(f < 1.0F)) {
-            BufferProxy.updateOverlayPostUniform(f);
+        int blurriness = this.gameRenderState.optionsRenderState.menuBackgroundBlurriness;
+        if (blurriness >= 1) {
+            BufferProxy.updateOverlayPostUniform(blurriness);
             RendererProxy.postBlur();
         }
 
         ci.cancel();
     }
 
-    @Redirect(method = "renderWorld(Lnet/minecraft/client/render/RenderTickCounter;)V",
-        at = @At(value = "INVOKE", target = "Lorg/joml/Matrix4f;mul(Lorg/joml/Matrix4fc;)Lorg/joml/Matrix4f;", remap = false))
-    public Matrix4f cancelPTimesB(Matrix4f instance, Matrix4fc right) {
-        return instance;
-    }
-
-    @Redirect(method = "renderWorld(Lnet/minecraft/client/render/RenderTickCounter;)V",
-        at = @At(value = "INVOKE",
-            target =
-                "Lnet/minecraft/client/render/WorldRenderer;render(Lnet/minecraft/client/util/ObjectAllocator;"
-                    +
-                    "Lnet/minecraft/client/render/RenderTickCounter;ZLnet/minecraft/client/render/Camera;"
-                    +
-                    "Lnet/minecraft/client/render/GameRenderer;Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;)V"))
-    public void performBTimesV(WorldRenderer instance,
-        ObjectAllocator allocator,
-        RenderTickCounter tickCounter,
-        boolean renderBlockOutline,
-        Camera camera,
-        GameRenderer gameRenderer,
-        Matrix4f viewMatrix,
-        Matrix4f projectionMatrix,
-        @Local boolean shouldRenderBlockOutline,
-        @Local MatrixStack matrixStack) {
-        Matrix4f
-            B =
-            new Matrix4f(matrixStack.peek()
-                .getPositionMatrix());
-        this.viewMatrix = new Matrix4f(viewMatrix);
-        viewMatrix = new Matrix4f(B.mul(viewMatrix));
-        instance.render(this.pool, tickCounter, shouldRenderBlockOutline, camera, gameRenderer,
-            viewMatrix, projectionMatrix);
-    }
-
-    @Inject(method = "renderWorld(Lnet/minecraft/client/render/RenderTickCounter;)V", at = @At(value = "TAIL"))
-    public void buildEntities(RenderTickCounter renderTickCounter, CallbackInfo ci) {
-        EntityProxy.build();
-    }
-
-    @Redirect(method = "renderWorld(Lnet/minecraft/client/render/RenderTickCounter;)V",
-        at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gl/Framebuffer;beginWrite(Z)V"))
-    public void cancelFramebufferBeginWrite(Framebuffer instance, boolean setViewport) {
-
-    }
-
-    @Inject(method = "renderWorld(Lnet/minecraft/client/render/RenderTickCounter;)V", at = @At(value = "TAIL"))
-    public void fuseWorld(RenderTickCounter renderTickCounter, CallbackInfo ci) {
-        RendererProxy.fuseWorld();
-    }
-
-    @Inject(method = "renderHand(Lnet/minecraft/client/render/Camera;FLorg/joml/Matrix4f;)V", at = @At(value = "HEAD"), cancellable = true)
-    public void redirectRenderHand(Camera camera, float tickDelta, Matrix4f matrix4f,
-        CallbackInfo ci) {
-        float worldFov = this.getFov(camera, tickDelta, true);
-        float handFov = this.getFov(camera, tickDelta, false);
-        float handProjectionScale =
-            (float) (Math.tan(Math.toRadians(worldFov * 0.5F)) /
-                Math.tan(Math.toRadians(handFov * 0.5F)));
-        EntityProxy.queueHandRebuild(buffers, tickDelta, firstPersonRenderer,
-            handProjectionScale);
+    @Inject(method = "renderItemInHand(Lnet/minecraft/client/renderer/state/level/CameraRenderState;"
+        + "FLorg/joml/Matrix4fc;)V", at = @At(value = "HEAD"), cancellable = true)
+    public void redirectRenderHand(CameraRenderState cameraState, float deltaPartialTick,
+        Matrix4fc modelViewMatrix, CallbackInfo ci) {
+        // Rescale the fixed-FOV hand into the (dynamic) world FOV, as the old getFov(true)/getFov(false)
+        // ratio did. World tan(fov/2) = 1 / projectionMatrix.m11; hand FOV is cameraState.hudFov.
+        float worldHalfTan = 1.0F / cameraState.projectionMatrix.m11();
+        float handHalfTan = (float) Math.tan(Math.toRadians(cameraState.hudFov) * 0.5);
+        float handProjectionScale = worldHalfTan / handHalfTan;
+        EntityProxy.queueHandRebuild(deltaPartialTick, this.itemInHandRenderer, handProjectionScale);
         ci.cancel();
     }
 
-    @Redirect(method = "render(Lnet/minecraft/client/render/RenderTickCounter;Z)V",
-        at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gl/Framebuffer;beginWrite(Z)V"))
-    public void cancelRenderFramebufferBeginWrite(Framebuffer instance, boolean setViewport) {
-
+    @Inject(method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V", at = @At(value = "TAIL"))
+    public void buildEntities(DeltaTracker deltaTracker, CallbackInfo ci) {
+        EntityProxy.build();
     }
 
-    @Inject(method = "render(Lnet/minecraft/client/render/RenderTickCounter;Z)V", at = @At(value = "HEAD"))
-    public void shouldRenderWorld(RenderTickCounter tickCounter, boolean tick, CallbackInfo ci) {
+    @Inject(method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V", at = @At(value = "TAIL"))
+    public void fuseWorld(DeltaTracker deltaTracker, CallbackInfo ci) {
+        RendererProxy.fuseWorld();
+    }
+
+    @Inject(method = "render(Lnet/minecraft/client/DeltaTracker;Z)V", at = @At(value = "HEAD"))
+    public void shouldRenderWorld(DeltaTracker deltaTracker, boolean advanceGameTime,
+        CallbackInfo ci) {
+        Minecraft client = Minecraft.getInstance();
         RendererProxy.shouldRenderWorld(
-            !this.client.skipGameRender && client.isFinishedLoading() && tick
-                && client.world != null);
-    }
-
-    @Inject(method = "render(Lnet/minecraft/client/render/RenderTickCounter;Z)V",
-        at = @At(value = "INVOKE",
-            target =
-                "Lnet/minecraft/client/gui/hud/InGameHud;render(Lnet/minecraft/client/gui/DrawContext;"
-                    + "Lnet/minecraft/client/render/RenderTickCounter;)V"))
-    public void renderFirstPersonOverlaysWithGuiProjection(RenderTickCounter tickCounter,
-        boolean tick, CallbackInfo ci, @Local DrawContext drawContext) {
-        float tickDelta = tickCounter.getTickDelta(true);
-        com.mojang.blaze3d.systems.RenderSystem.backupProjectionMatrix();
-        com.mojang.blaze3d.systems.RenderSystem.setProjectionMatrix(
-            this.getBasicProjectionMatrix(this.getFov(this.camera, tickDelta, false)),
-            ProjectionType.PERSPECTIVE);
-        Matrix4fStack modelViewStack = com.mojang.blaze3d.systems.RenderSystem.getModelViewStack();
-        modelViewStack.pushMatrix();
-        modelViewStack.identity();
-        VertexConsumerProvider.Immediate immediate = VertexConsumerProvider.immediate(
-            new BufferAllocator(1536));
-        try {
-            InGameOverlayRenderer.renderOverlays(this.client, new MatrixStack(), immediate);
-            immediate.draw();
-        } finally {
-            modelViewStack.popMatrix();
-            com.mojang.blaze3d.systems.RenderSystem.restoreProjectionMatrix();
-        }
-    }
-
-    @Override
-    public Matrix4f radiance$getRotationMatrix() {
-        return viewMatrix;
-    }
-
-    @Redirect(method = "updateWorldIcon(Ljava/nio/file/Path;)V",
-        at = @At(value = "INVOKE",
-            target =
-                "Lnet/minecraft/client/util/ScreenshotRecorder;takeScreenshot(Lnet/minecraft/client/gl/Framebuffer;)"
-                    +
-                    "Lnet/minecraft/client/texture/NativeImage;"))
-    public NativeImage redirectScreenshot(Framebuffer framebuffer) {
-        return RendererProxy.takeScreenshotWithoutUI();
+            client.isGameLoadFinished() && advanceGameTime && client.level != null);
     }
 }
