@@ -30,6 +30,8 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.ItemInHandRenderer;
 import net.minecraft.client.renderer.SubmitNodeStorage;
+import net.minecraft.client.renderer.block.BlockStateModelSet;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
 import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
@@ -42,14 +44,18 @@ import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.rendertype.PreparedRenderType;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.client.renderer.state.level.BlockBreakingRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.CommonColors;
 import net.minecraft.util.Mth;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.FishingHook;
 import net.minecraft.server.level.BlockDestructionProgress;
+import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
@@ -432,17 +438,52 @@ public class EntityProxy {
     }
 
     /**
-     * 26.2 TODO: block-breaking crumbling was rearchitected. It is now either
-     * {@code submitBreakingBlockModel(PoseStack, List&lt;BlockStateModelPart&gt;, int)} (which needs
-     * the block's model parts reconstructed) or a {@code ModelFeatureRenderer.CrumblingOverlay}
-     * folded into the block-entity/block {@code submit}; the old {@code BlockRenderManager
-     * .renderDamage(...)} into a VCP is gone (there is no {@code BlockRenderDispatcher} render-damage
-     * path to intercept). No-op until that capture is designed so the render loop is unaffected.
+     * 26.2: block-breaking crumbling is now a submit path -- the visible break animations are
+     * pre-extracted into {@link BlockBreakingRenderState}s, and each is submitted via
+     * {@code submitBreakingBlockModel} (reconstructing the block's model parts, mirroring
+     * {@code LevelRenderer.submitBlockDestroyAnimation}). It drains through
+     * {@code BlockModelFeatureRenderer} (a {@code RenderTypeFeatureRenderer}), so the mod's central
+     * capture hook picks up the overlay geometry. Submitted at block-local origin (+ the block's
+     * sub-block offset); the world position is carried on the render data, like block entities.
      */
-    public static void queueCrumblingRebuild(Camera camera,
-        Long2ObjectMap<SortedSet<BlockDestructionProgress>> blockBreakingProgressions,
-        ClientLevel world) {
-        // no-op pending 26.2 crumbling-capture design (see javadoc)
+    public static void queueCrumblingRebuild(LevelRenderState levelRenderState) {
+        if (levelRenderState.blockBreakingRenderStates.isEmpty()) {
+            return;
+        }
+        BlockStateModelSet modelSet = Minecraft.getInstance().getModelManager()
+            .getBlockStateModelSet();
+
+        List<StorageVertexConsumerProvider> storageVertexConsumerProviders = new ArrayList<>();
+        EntityRenderDataList entityRenderDataList = new EntityRenderDataList();
+        RandomSource random = RandomSource.createThreadLocalInstance();
+        List<BlockStateModelPart> parts = new ArrayList<>();
+
+        for (BlockBreakingRenderState state : levelRenderState.blockBreakingRenderStates) {
+            BlockState blockState = state.blockState();
+            if (blockState.getRenderShape() != RenderShape.MODEL) {
+                continue;
+            }
+            BlockPos blockPos = state.blockPos();
+
+            PoseStack poseStack = new PoseStack();
+            poseStack.translate(blockState.getOffset(blockPos));
+            random.setSeed(blockState.getSeed(blockPos));
+            modelSet.get(blockState).collectParts(random, parts);
+
+            StorageVertexConsumerProvider store = new StorageVertexConsumerProvider(786432);
+            storageVertexConsumerProviders.add(store);
+            SubmitNodeStorage submitNodeStorage = new SubmitNodeStorage();
+            submitNodeStorage.submitBreakingBlockModel(poseStack, List.copyOf(parts),
+                state.progress());
+            parts.clear();
+            radiance$drainCapture(submitNodeStorage, store);
+
+            processWorldEntityRenderData(store, Long.hashCode(blockPos.asLong()), blockPos.getX(),
+                blockPos.getY(), blockPos.getZ(), Constants.RayTracingFlags.WORLD, true,
+                entityRenderDataList);
+        }
+
+        queueBuild(storageVertexConsumerProviders, entityRenderDataList);
     }
 
     /**

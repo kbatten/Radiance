@@ -197,7 +197,10 @@ public abstract class WorldRendererMixins {
             EntityProxy.queueTargetBlockOutlineRebuild(gameRenderer.mainCamera(), level);
         }
 
-        // 26.2 TODO: particle / weather / crumbling capture (EntityProxy no-op stubs for now).
+        // ===================== Block-breaking crumbling =====================
+        EntityProxy.queueCrumblingRebuild(levelRenderState);
+
+        // 26.2 TODO: particle / weather capture (EntityProxy no-op stubs for now).
 
         // ===================== Clouds (CloudRendererMixins intercepts render() for capture) =======
         CloudStatus cloudStatus = optionsState.cloudStatus;
