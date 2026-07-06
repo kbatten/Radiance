@@ -44,7 +44,6 @@
     "vulkan_render_integration.ParticleMixins",
     "vulkan_render_integration.ReloadableTextureMixins",
     "vulkan_render_integration.RenderPassMixins",
-    "vulkan_render_integration.RenderSystemMixins",
     "vulkan_render_integration.RenderTypeFeatureRendererMixins",
     "vulkan_render_integration.RenderTypeMixins",
     "vulkan_render_integration.ScreenMixins",
