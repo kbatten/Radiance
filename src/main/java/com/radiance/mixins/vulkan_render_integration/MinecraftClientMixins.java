@@ -1,9 +1,7 @@
 package com.radiance.mixins.vulkan_render_integration;
 
 import com.mojang.blaze3d.platform.Window;
-import com.mojang.blaze3d.systems.GpuBackend;
 import com.mojang.blaze3d.systems.GpuSurface;
-import com.mojang.blaze3d.vulkan.VulkanBackend;
 import com.radiance.client.option.Options;
 import com.radiance.client.pipeline.Pipeline;
 import com.radiance.client.proxy.vulkan.RendererProxy;
@@ -11,7 +9,6 @@ import com.radiance.client.proxy.vulkan.TextureProxy;
 import com.radiance.client.proxy.world.ChunkProxy;
 import com.radiance.client.texture.AuxiliaryTextureReloader;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.PreferredGraphicsApi;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.main.GameConfig;
 import net.minecraft.server.packs.resources.ReloadableResourceManager;
@@ -33,10 +30,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * renamed {@code render(Z)} -> {@code renderFrame(Z)}, and {@code RunArgs} -> {@code GameConfig}.
  *
  * <p>The mod runs its own native (MCVR) Vulkan ray-tracing renderer via {@code RendererProxy} and
- * takes over presentation. Because 26.2 constantly uses {@code RenderSystem.getDevice()} (including in
- * the present path), MC's device must still initialise -- so the mod's renderer init is now injected
- * <em>after</em> the window is created (rather than replacing {@code RenderSystem.initRenderer}), and
- * presentation is taken over by redirecting {@code windowSurface.present()}.
+ * takes over presentation. MC stays on its own (GL) backend so {@code GlDevice} initialises with a
+ * real context and the mod's GL-command capture mixins fire; MCVR attaches its Vulkan surface to the
+ * raw window natively (see MCVR's platform surface creation), so no {@code GLFW_NO_API} window is
+ * needed. MC's device init happens normally; the mod's renderer init is injected <em>after</em> the
+ * window is created, and presentation is taken over by a renderFrame TAIL inject (MC's own surface
+ * configure/acquire/present are no-oped).
  *
  * <p>Dropped as obsolete in 26.2 (their targets dissolved into the GpuDevice/frame-graph): the whole
  * GL-framebuffer suppression block (the {@code new WindowFramebuffer} / framebuffer-field / clear /
@@ -59,20 +58,6 @@ public class MinecraftClientMixins {
     @Shadow
     @Final
     private ReloadableResourceManager resourceManager;
-
-    /**
-     * 26.2: MCVR needs a Vulkan ({@code GLFW_NO_API}) window surface, which MC's OpenGL backend
-     * cannot provide -- {@code glfwCreateWindowSurface} then fails with "requires the window to have
-     * the client API set to GLFW_NO_API". The saved graphics-API preference is often OpenGL (and 26.2
-     * resets it to OpenGL after an unclean shutdown), so force the Vulkan backend here: the window is
-     * created context-less and the native renderer's surface can attach.
-     */
-    @Redirect(method = "<init>(Lnet/minecraft/client/main/GameConfig;)V",
-        at = @At(value = "INVOKE", target = "Lnet/minecraft/client/PreferredGraphicsApi;"
-            + "getBackendsToTry()[Lcom/mojang/blaze3d/systems/GpuBackend;"))
-    private GpuBackend[] radiance$forceVulkanBackend(PreferredGraphicsApi instance) {
-        return new GpuBackend[]{new VulkanBackend()};
-    }
 
     // region <init>
     @Inject(method = "<init>(Lnet/minecraft/client/main/GameConfig;)V",
@@ -111,11 +96,10 @@ public class MinecraftClientMixins {
     // endregion
 
     // region <renderFrame>
-    // MCVR owns the window's Vulkan swapchain (created in RendererProxy.initRenderer during <init>),
-    // so MC's own swapchain lifecycle must be suppressed: otherwise windowSurface.configure() fails
-    // with VK_ERROR_NATIVE_WINDOW_IN_USE and -- crucially -- MC never "acquires", so its
-    // windowSurface.present() (only reached while acquired) never runs. That is why the present
-    // takeover is an unconditional renderFrame TAIL inject, not a present() redirect.
+    // MCVR owns the window's presentation (its own native Vulkan surface + swapchain), so MC must not
+    // drive the window surface itself. No-op MC's configure()/acquireNextTexture() so MC never
+    // "acquires" -- which also means its windowSurface.present() (only reached while acquired) never
+    // runs -- and take over presentation with an unconditional renderFrame TAIL inject.
     @Redirect(method = "renderFrame(Z)V",
         at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/GpuSurface;configure"
             + "(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V"))
