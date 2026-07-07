@@ -1,7 +1,9 @@
 package com.radiance.mixins.vulkan_render_integration;
 
 import com.mojang.blaze3d.platform.Window;
+import com.mojang.blaze3d.systems.GpuBackend;
 import com.mojang.blaze3d.systems.GpuSurface;
+import com.mojang.blaze3d.vulkan.VulkanBackend;
 import com.radiance.client.option.Options;
 import com.radiance.client.pipeline.Pipeline;
 import com.radiance.client.proxy.vulkan.RendererProxy;
@@ -9,6 +11,7 @@ import com.radiance.client.proxy.vulkan.TextureProxy;
 import com.radiance.client.proxy.world.ChunkProxy;
 import com.radiance.client.texture.AuxiliaryTextureReloader;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.PreferredGraphicsApi;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.main.GameConfig;
 import net.minecraft.server.packs.resources.ReloadableResourceManager;
@@ -56,6 +59,20 @@ public class MinecraftClientMixins {
     @Shadow
     @Final
     private ReloadableResourceManager resourceManager;
+
+    /**
+     * 26.2: MCVR needs a Vulkan ({@code GLFW_NO_API}) window surface, which MC's OpenGL backend
+     * cannot provide -- {@code glfwCreateWindowSurface} then fails with "requires the window to have
+     * the client API set to GLFW_NO_API". The saved graphics-API preference is often OpenGL (and 26.2
+     * resets it to OpenGL after an unclean shutdown), so force the Vulkan backend here: the window is
+     * created context-less and the native renderer's surface can attach.
+     */
+    @Redirect(method = "<init>(Lnet/minecraft/client/main/GameConfig;)V",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/client/PreferredGraphicsApi;"
+            + "getBackendsToTry()[Lcom/mojang/blaze3d/systems/GpuBackend;"))
+    private GpuBackend[] radiance$forceVulkanBackend(PreferredGraphicsApi instance) {
+        return new GpuBackend[]{new VulkanBackend()};
+    }
 
     // region <init>
     @Inject(method = "<init>(Lnet/minecraft/client/main/GameConfig;)V",
