@@ -111,9 +111,27 @@ public class MinecraftClientMixins {
     // endregion
 
     // region <renderFrame>
+    // MCVR owns the window's Vulkan swapchain (created in RendererProxy.initRenderer during <init>),
+    // so MC's own swapchain lifecycle must be suppressed: otherwise windowSurface.configure() fails
+    // with VK_ERROR_NATIVE_WINDOW_IN_USE and -- crucially -- MC never "acquires", so its
+    // windowSurface.present() (only reached while acquired) never runs. That is why the present
+    // takeover is an unconditional renderFrame TAIL inject, not a present() redirect.
     @Redirect(method = "renderFrame(Z)V",
-        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/GpuSurface;present()V"))
-    public void takeOverPresent(GpuSurface instance) {
+        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/GpuSurface;configure"
+            + "(Lcom/mojang/blaze3d/systems/GpuSurface$Configuration;)V"))
+    public void cancelSurfaceConfigure(GpuSurface instance, GpuSurface.Configuration config) {
+
+    }
+
+    @Redirect(method = "renderFrame(Z)V",
+        at = @At(value = "INVOKE",
+            target = "Lcom/mojang/blaze3d/systems/GpuSurface;acquireNextTexture()V"))
+    public void cancelSurfaceAcquire(GpuSurface instance) {
+
+    }
+
+    @Inject(method = "renderFrame(Z)V", at = @At("TAIL"))
+    public void takeOverPresent(boolean advanceGameTime, CallbackInfo ci) {
         ChunkProxy.waitImportantChunkRebuild();
         synchronized (TextureProxy.class) {
             RendererProxy.submitCommandAndPresent();
