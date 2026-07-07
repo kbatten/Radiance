@@ -1,6 +1,7 @@
 package com.radiance.mixins.vulkan_render_integration;
 
 import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IAbstractTextureExt;
 import net.minecraft.client.renderer.texture.AbstractTexture;
@@ -28,6 +29,9 @@ public class AbstractTextureMixins implements IAbstractTextureExt {
     @Shadow
     protected GpuTexture texture;
 
+    @Shadow
+    protected GpuSampler sampler;
+
     @Override
     public int radiance$getGlIDUnsafe() {
         if (this.texture instanceof GlTexture glTexture) {
@@ -36,6 +40,16 @@ public class AbstractTextureMixins implements IAbstractTextureExt {
         // GpuTexture not created yet, or a non-OpenGL backend is active.
         throw new IllegalStateException(
             "Texture GL id is not available (texture=" + this.texture + ")");
+    }
+
+    @Override
+    public GpuTexture radiance$getTexture() {
+        return this.texture;
+    }
+
+    @Override
+    public GpuSampler radiance$getSampler() {
+        return this.sampler;
     }
 
     // The former setFilter(ZZ)/setClamp(Z) redirects are re-expressed against the new

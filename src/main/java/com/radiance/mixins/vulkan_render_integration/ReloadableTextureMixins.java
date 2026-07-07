@@ -7,10 +7,10 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.radiance.client.constant.VulkanConstants;
 import com.radiance.client.proxy.vulkan.TextureProxy;
+import com.radiance.mixin_related.extensions.vulkan_render_integration.IAbstractTextureExt;
 import net.minecraft.client.renderer.texture.ReloadableTexture;
 import net.minecraft.client.renderer.texture.TextureContents;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -31,33 +31,32 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ReloadableTexture.class)
 public abstract class ReloadableTextureMixins {
 
-    @Shadow
-    protected GpuTexture texture;
-
-    @Shadow
-    protected GpuSampler sampler;
-
     @Inject(
         method = "apply(Lnet/minecraft/client/renderer/texture/TextureContents;)V",
         at = @At("RETURN"))
     private void radiance$pushSampler(TextureContents contents, CallbackInfo ci) {
-        if (!(this.texture instanceof GlTexture glTexture) || this.sampler == null) {
+        // texture/sampler are declared on the AbstractTexture superclass; Mixin can't @Shadow
+        // inherited fields on this subclass target, so read them through the accessor.
+        IAbstractTextureExt self = (IAbstractTextureExt) this;
+        GpuTexture texture = self.radiance$getTexture();
+        GpuSampler sampler = self.radiance$getSampler();
+        if (!(texture instanceof GlTexture glTexture) || sampler == null) {
             return;
         }
         int id = glTexture.glId();
 
-        boolean linear = this.sampler.getMagFilter() == FilterMode.LINEAR;
+        boolean linear = sampler.getMagFilter() == FilterMode.LINEAR;
         int filter = (linear
             ? VulkanConstants.VkFilter.VK_FILTER_LINEAR
             : VulkanConstants.VkFilter.VK_FILTER_NEAREST).getValue();
-        int mipmap = (this.sampler.getMaxLod().isPresent()
+        int mipmap = (sampler.getMaxLod().isPresent()
             ? (linear
                 ? VulkanConstants.VkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_LINEAR
                 : VulkanConstants.VkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_NEAREST)
             : VulkanConstants.VkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_NEAREST).getValue();
         TextureProxy.setFilter(id, filter, mipmap);
 
-        int clamp = (this.sampler.getAddressModeU() == AddressMode.CLAMP_TO_EDGE
+        int clamp = (sampler.getAddressModeU() == AddressMode.CLAMP_TO_EDGE
             ? VulkanConstants.VkSamplerAddressMode.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
             : VulkanConstants.VkSamplerAddressMode.VK_SAMPLER_ADDRESS_MODE_REPEAT).getValue();
         TextureProxy.setClamp(id, clamp);
