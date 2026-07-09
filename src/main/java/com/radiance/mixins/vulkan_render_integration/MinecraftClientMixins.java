@@ -116,6 +116,7 @@ public class MinecraftClientMixins {
 
     @Inject(method = "renderFrame(Z)V", at = @At("TAIL"))
     public void takeOverPresent(boolean advanceGameTime, CallbackInfo ci) {
+        com.radiance.client.RadianceDebug.log("renderFrame TAIL (present)");
         ChunkProxy.waitImportantChunkRebuild();
         synchronized (TextureProxy.class) {
             RendererProxy.submitCommandAndPresent();

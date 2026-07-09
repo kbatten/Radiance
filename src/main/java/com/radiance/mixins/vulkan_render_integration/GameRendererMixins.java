@@ -90,6 +90,7 @@ public abstract class GameRendererMixins {
     @Inject(method = "render(Lnet/minecraft/client/DeltaTracker;Z)V", at = @At(value = "HEAD"))
     public void shouldRenderWorld(DeltaTracker deltaTracker, boolean advanceGameTime,
         CallbackInfo ci) {
+        com.radiance.client.RadianceDebug.log("gameRenderer.render HEAD");
         Minecraft client = Minecraft.getInstance();
         RendererProxy.shouldRenderWorld(
             client.isGameLoadFinished() && advanceGameTime && client.level != null);
