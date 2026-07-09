@@ -44,9 +44,12 @@ public class RadianceClient implements ClientModInitializer {
         // core lib
         String osName = System.getProperty("os.name");
         if (osName.toLowerCase().contains("windows")) {
+            // core.lib is the MSVC import library (a build-time linking artifact); only core.dll is
+            // actually loaded at runtime (System.load below). Copy it if present, but never require it
+            // -- a resources deploy that ships core.dll without core.lib must not crash startup.
             Path libTargetPath = radianceDir.resolve("core.lib");
             Path libResourcePath = Path.of("core.lib");
-            copyFileFromResource(libTargetPath, libResourcePath);
+            copyOptionalFileFromResource(libTargetPath, libResourcePath);
 
             Path dllTargetPath = radianceDir.resolve("core.dll");
             Path dllResourcePath = Path.of("core.dll");
