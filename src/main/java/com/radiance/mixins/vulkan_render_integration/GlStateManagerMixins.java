@@ -25,7 +25,7 @@ public class GlStateManagerMixins {
     // region <PipelineStateProxy.ViewportState>
     @Inject(method = "_disableScissorTest()V",
         at = @At(value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThreadOrInit()V",
+            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V",
             shift = At.Shift.AFTER),
         cancellable = true,
         remap = false)
@@ -36,7 +36,7 @@ public class GlStateManagerMixins {
 
     @Inject(method = "_enableScissorTest()V",
         at = @At(value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThreadOrInit()V",
+            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V",
             shift = At.Shift.AFTER),
         cancellable = true,
         remap = false)
@@ -47,7 +47,7 @@ public class GlStateManagerMixins {
 
     @Inject(method = "_scissorBox(IIII)V",
         at = @At(value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThreadOrInit()V",
+            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V",
             shift = At.Shift.AFTER),
         cancellable = true,
         remap = false)
@@ -56,10 +56,11 @@ public class GlStateManagerMixins {
         ci.cancel();
     }
 
+    // Unlike its siblings, 26.2's _viewport does not call assertOnRenderThread at all -- it goes
+    // straight to GL33C.glViewport -- so there is no invoke to anchor to. HEAD is equivalent here
+    // because the handler cancels the method outright.
     @Inject(method = "_viewport(IIII)V",
-        at = @At(value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThreadOrInit()V",
-            shift = At.Shift.AFTER),
+        at = @At("HEAD"),
         cancellable = true,
         remap = false)
     private static void redirectViewport(int x, int y, int width, int height, CallbackInfo ci) {
@@ -154,7 +155,7 @@ public class GlStateManagerMixins {
     // region <PipelineStateProxy.DepthStencilState>
     @Inject(method = "_disableDepthTest()V",
         at = @At(value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThreadOrInit()V",
+            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V",
             shift = At.Shift.AFTER),
         cancellable = true,
         remap = false)
@@ -165,7 +166,7 @@ public class GlStateManagerMixins {
 
     @Inject(method = "_enableDepthTest()V",
         at = @At(value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThreadOrInit()V",
+            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V",
             shift = At.Shift.AFTER),
         cancellable = true,
         remap = false)
@@ -176,7 +177,7 @@ public class GlStateManagerMixins {
 
     @Inject(method = "_depthFunc(I)V",
         at = @At(value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThreadOrInit()V",
+            target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V",
             shift = At.Shift.AFTER),
         cancellable = true,
         remap = false)
@@ -268,7 +269,7 @@ public class GlStateManagerMixins {
 
     // region <DrawCommandProxy.Overlay>
     @Inject(method = "_clear(I)V",
-        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThreadOrInit()V", shift = At.Shift.AFTER),
+        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V", shift = At.Shift.AFTER),
         cancellable = true,
         remap = false)
     private static void redirectClear(int mask, CallbackInfo ci) {
