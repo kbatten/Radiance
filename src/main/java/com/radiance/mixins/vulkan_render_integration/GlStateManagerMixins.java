@@ -286,7 +286,10 @@ public class GlStateManagerMixins {
     }
     // endregion
 
-    @Redirect(method = "_getString(I)Ljava/lang/String;", at = @At(value = "INVOKE", target = "Lorg/lwjgl/opengl/GL11;glGetString(I)Ljava/lang/String;", remap = false))
+    // 26.2's GlStateManager calls through GL33C, not GL11. Mixin matches the literal invocation
+    // owner in the bytecode, so the target has to name GL33C even though glGetString is inherited
+    // from GL11C.
+    @Redirect(method = "_getString(I)Ljava/lang/String;", at = @At(value = "INVOKE", target = "Lorg/lwjgl/opengl/GL33C;glGetString(I)Ljava/lang/String;", remap = false))
     private static String redirectGetString(int name) {
         return "Vulkan 1.4";
     }
