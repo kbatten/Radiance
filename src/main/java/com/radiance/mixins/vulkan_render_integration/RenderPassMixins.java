@@ -14,6 +14,7 @@ import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import com.radiance.client.DrawInterceptStats;
 import com.radiance.client.constant.Constants;
 import com.radiance.client.proxy.vulkan.BufferProxy;
 import com.radiance.client.proxy.vulkan.ShaderProxy;
@@ -23,6 +24,7 @@ import com.radiance.client.shader.ShaderRegistry;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import java.nio.ByteBuffer;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import org.lwjgl.system.MemoryStack;
@@ -97,26 +99,54 @@ public abstract class RenderPassMixins {
         this.radiance$textures.put(name, glId);
     }
 
+    // Diagnostic only -- 26.2's RenderPass has nine draw entry points and only drawIndexed below is
+    // intercepted. If MC issues this geometry through one of the others it reaches vanilla GL and
+    // never becomes Vulkan work, which would look exactly like the blank screen. Count, do not
+    // cancel. Descriptors taken from javap -s so a bad selector cannot abort startup.
+    @Inject(method = "draw(IIII)V", at = @At("HEAD"))
+    private void radiance$countDraw(int a, int b, int c, int d, CallbackInfo ci) {
+        DrawInterceptStats.otherDraw("draw");
+    }
+
+    @Inject(method = "drawMultipleIndexed(Ljava/util/Collection;Lcom/mojang/blaze3d/buffers/GpuBuffer;"
+        + "Lcom/mojang/blaze3d/IndexType;Ljava/util/Collection;Ljava/lang/Object;)V",
+        at = @At("HEAD"))
+    private void radiance$countDrawMultipleIndexed(Collection<?> draws, GpuBuffer indexBuffer,
+        IndexType indexType, Collection<String> uniforms, Object userData, CallbackInfo ci) {
+        DrawInterceptStats.otherDraw("drawMultipleIndexed");
+    }
+
     @Inject(method = "drawIndexed", at = @At("HEAD"), cancellable = true)
     private void radiance$onDrawIndexed(int indexCount, int instanceCount, int firstIndex,
         int vertexOffset, int firstInstance, CallbackInfo ci) {
+        DrawInterceptStats.entered();
         if (this.radiance$pipeline == null || this.radiance$vertexBuffer == null
             || this.radiance$indexBuffer == null || this.radiance$indexType == null) {
+            DrawInterceptStats.noState();
             return; // not enough captured state -- let vanilla draw
         }
         if (!(RenderSystem.getDevice().precompilePipeline(this.radiance$pipeline)
             instanceof GlRenderPipeline glPipeline)) {
+            DrawInterceptStats.notGlPipeline();
             return;
         }
         GlProgram program = glPipeline.program();
         if (program == GlProgram.INVALID_PROGRAM) {
+            DrawInterceptStats.invalidProgram();
             return;
         }
 
         byte[] vertexData = UniformCapture.get(this.radiance$vertexBuffer);
         byte[] indexData = UniformCapture.get(
             new GpuBufferSlice(this.radiance$indexBuffer, 0L, this.radiance$indexBuffer.size()));
-        if (vertexData == null || indexData == null) {
+        // Split so the counters distinguish which of the two lookups failed -- vertex and index data
+        // reach UniformCapture by different routes, so they can fail independently.
+        if (vertexData == null) {
+            DrawInterceptStats.noVertexData();
+            return;
+        }
+        if (indexData == null) {
+            DrawInterceptStats.noIndexData();
             return;
         }
 
@@ -150,6 +180,7 @@ public abstract class RenderPassMixins {
             MemoryUtil.memFree(indexBuf);
         }
 
+        DrawInterceptStats.replayed();
         ci.cancel();
     }
 }
