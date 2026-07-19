@@ -8,6 +8,7 @@ import com.mojang.blaze3d.textures.GpuTexture;
 import com.radiance.client.proxy.vulkan.GeometryCapture;
 import com.radiance.client.proxy.vulkan.TextureProxy;
 import java.nio.ByteBuffer;
+import org.lwjgl.system.MemoryUtil;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -78,5 +79,61 @@ public abstract class CommandEncoderMixins {
     private void radiance$captureCopyToBuffer(GpuBufferSlice source, GpuBufferSlice destination,
         CallbackInfo ci) {
         GeometryCapture.recordCopy(source, destination);
+    }
+
+    /**
+     * Mirror {@code copyBufferToTexture} into Vulkan -- the third texture-write route, used when the
+     * source pixels originate in a GPU buffer rather than a NativeImage. The default bitmap font
+     * uploads every glyph this way ({@code BitmapProvider$Glyph.upload} -> {@code copyBufferToTexture}),
+     * and animated sprites use it for later frames. Without it the font sheet stays empty in the Vulkan
+     * backend even though {@code createTexture} imported the image: {@code gui_text} then samples
+     * nothing, each glyph hits its {@code if (color.a < 0.1) discard}, and <em>all</em> text is
+     * invisible -- while the title logo, which travels the {@code writeToTexture(NativeImage)} route
+     * mirrored above, still shows. That is the "MINECRAFT JAVA EDITION visible but no button labels"
+     * symptom.
+     *
+     * <p>The source bytes live in a GPU buffer that MC populated through the mapped-view route, which
+     * {@link GeometryCapture} already mirrors, so they are read back here with no GPU readback. The int
+     * arguments (decoded from GlCommandEncoder's glTexSubImage2D, whose PBO read offset is
+     * {@code sliceOffset + (skipPixels + skipRows * rowLength) * blockSize}) are, in order: source
+     * skip-pixels (X) and skip-rows (Y), source row length and image height, then destination X/Y,
+     * region width/height, mip level and array layer. The native {@code queueUpload} indexes the
+     * appended source blob the same way from srcOffsetX/srcOffsetY, so the whole captured source image
+     * is handed over with those skips rather than pre-sliced.
+     *
+     * <p>Only layer 0 is mirrored: {@code queueUpload} targets a 2D image and takes no array-layer
+     * argument, so cube faces (the panorama) are left to the future samplerCube work -- its shader is
+     * unavailable today and falls back to GL regardless.
+     */
+    @Inject(
+        method = "copyBufferToTexture(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;IIII"
+            + "Lcom/mojang/blaze3d/textures/GpuTexture;IIIIII)V",
+        at = @At("HEAD"))
+    private void radiance$mirrorCopyBufferToTexture(GpuBufferSlice source, int srcSkipPixels,
+        int srcSkipRows, int srcRowLength, int srcImageHeight, GpuTexture destination, int destX,
+        int destY, int width, int height, int mipLevel, int depthOrLayer, CallbackInfo ci) {
+        if (depthOrLayer != 0 || !(destination instanceof GlTexture glTexture)) {
+            return;
+        }
+        byte[] bytes = GeometryCapture.get(source);
+        if (bytes == null) {
+            return; // source buffer not captured (e.g. panorama cube) -- leave it to the GL path
+        }
+        ByteBuffer src = MemoryUtil.memAlloc(bytes.length);
+        try {
+            src.put(bytes).flip();
+            TextureProxy.queueUpload(
+                MemoryUtil.memAddress(src), // srcPointer -- base (pixel 0,0) of the source image
+                bytes.length,               // srcSizeInBytes
+                srcRowLength,               // srcRowPixels
+                glTexture.glId(),           // dstId
+                srcSkipPixels,              // srcOffsetX
+                srcSkipRows,                // srcOffsetY
+                destX, destY,               // dstOffsetX, dstOffsetY
+                width, height,              // width, height
+                mipLevel);                  // level
+        } finally {
+            MemoryUtil.memFree(src); // queueUpload copies synchronously, so this is safe to free now
+        }
     }
 }
