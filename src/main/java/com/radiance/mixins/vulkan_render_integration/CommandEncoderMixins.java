@@ -5,6 +5,7 @@ import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.textures.GpuTexture;
+import com.radiance.client.proxy.vulkan.GeometryCapture;
 import com.radiance.client.proxy.vulkan.TextureProxy;
 import com.radiance.client.proxy.vulkan.UniformCapture;
 import java.nio.ByteBuffer;
@@ -60,5 +61,9 @@ public abstract class CommandEncoderMixins {
     private void radiance$captureWriteToBuffer(GpuBufferSlice destination, ByteBuffer data,
         CallbackInfo ci) {
         UniformCapture.capture(destination, data);
+        // Also mirror into GeometryCapture: not everything is staged. The shared quad index buffer
+        // arrives here, and StagingBuffer$Cpu routes all of its uploads through writeToBuffer, so the
+        // draw path must be able to resolve geometry from this route as well as from staging.
+        GeometryCapture.captureWrite(destination, data);
     }
 }

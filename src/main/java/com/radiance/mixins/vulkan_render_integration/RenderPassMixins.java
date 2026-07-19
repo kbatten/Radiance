@@ -17,6 +17,7 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import com.radiance.client.DrawInterceptStats;
 import com.radiance.client.constant.Constants;
 import com.radiance.client.proxy.vulkan.BufferProxy;
+import com.radiance.client.proxy.vulkan.GeometryCapture;
 import com.radiance.client.proxy.vulkan.ShaderProxy;
 import com.radiance.client.proxy.vulkan.UniformCapture;
 import com.radiance.client.shader.ShaderDefinition;
@@ -136,9 +137,13 @@ public abstract class RenderPassMixins {
             return;
         }
 
-        byte[] vertexData = UniformCapture.get(this.radiance$vertexBuffer);
-        byte[] indexData = UniformCapture.get(
-            new GpuBufferSlice(this.radiance$indexBuffer, 0L, this.radiance$indexBuffer.size()));
+        // Geometry comes from GeometryCapture, not UniformCapture: 26.2 stages vertex data through
+        // StagingBuffer and moves it with copyToBuffer, so it never reaches the writeToBuffer hook
+        // UniformCapture is built on. GeometryCapture also resolves ranges, which matters because a
+        // draw binds a sub-slice of a larger shared vertex buffer rather than a whole buffer.
+        byte[] vertexData = GeometryCapture.get(this.radiance$vertexBuffer);
+        byte[] indexData = GeometryCapture.get(this.radiance$indexBuffer, 0L,
+            this.radiance$indexBuffer.size());
         // Split so the counters distinguish which of the two lookups failed -- vertex and index data
         // reach UniformCapture by different routes, so they can fail independently.
         if (vertexData == null) {

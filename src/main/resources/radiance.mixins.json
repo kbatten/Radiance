@@ -50,6 +50,8 @@
     "vulkan_render_integration.SectionBuilderMixins",
     "vulkan_render_integration.ShaderProgramMixins",
     "vulkan_render_integration.SingleAtlasSourceMixins",
+    "vulkan_render_integration.StagingBufferMixins",
+    "vulkan_render_integration.StagingBufferUploaderMixins",
     "vulkan_render_integration.TextureUtilMixins",
     "vulkan_render_integration.UnstitchAtlasSourceMixins",
     "vulkan_render_integration.VideoWarningManagerWarningPatternLoaderMixins",
