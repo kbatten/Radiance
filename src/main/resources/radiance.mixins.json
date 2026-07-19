@@ -27,6 +27,7 @@
     "vulkan_render_integration.CloudRendererMixins",
     "vulkan_render_integration.CommandEncoderMixins",
     "vulkan_render_integration.CompiledShaderMixins",
+    "vulkan_render_integration.CubeMapTextureMixins",
     "vulkan_render_integration.DirectoryAtlasSourceMixins",
     "vulkan_render_integration.DrawContextMixins",
     "vulkan_render_integration.FluidRendererMixins",

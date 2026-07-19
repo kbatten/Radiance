@@ -38,6 +38,9 @@ public abstract class TextureUtilMixins {
     private void radiance$importSupplier(Supplier<String> label, int usage, GpuFormat format,
         int width, int height, int depthOrLayers, int mipLevels,
         CallbackInfoReturnable<GpuTexture> cir) {
+        if (radiance$isCubeTexture(usage, depthOrLayers)) {
+            return;
+        }
         radiance$importToVulkan(cir.getReturnValue(), format, width, height, mipLevels);
     }
 
@@ -47,7 +50,17 @@ public abstract class TextureUtilMixins {
     private void radiance$importString(String label, int usage, GpuFormat format,
         int width, int height, int depthOrLayers, int mipLevels,
         CallbackInfoReturnable<GpuTexture> cir) {
+        if (radiance$isCubeTexture(usage, depthOrLayers)) {
+            return;
+        }
         radiance$importToVulkan(cir.getReturnValue(), format, width, height, mipLevels);
+    }
+
+    // A cube texture (6 cube-compatible layers) must not be imported as a 2D image here -- that would
+    // register a wrong 2D image under its GL id and the later cube face upload would fault. The
+    // panorama's CubeMapTexture is imported and uploaded as a samplerCube by CubeMapTextureMixins.
+    private static boolean radiance$isCubeTexture(int usage, int depthOrLayers) {
+        return (usage & GpuTexture.USAGE_CUBEMAP_COMPATIBLE) != 0 && depthOrLayers == 6;
     }
 
     private static void radiance$importToVulkan(GpuTexture gpuTexture, GpuFormat format,

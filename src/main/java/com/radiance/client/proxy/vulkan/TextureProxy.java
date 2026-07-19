@@ -24,6 +24,13 @@ public class TextureProxy {
     public synchronized static native void prepareImage(int id, int mipLevels, int width,
         int height, int format);
 
+    // Cube textures (the panorama) are imported and uploaded separately from 2D textures: they need a
+    // 6-layer cube image and a samplerCube bindless slot, neither of which the 2D path provides.
+    public synchronized static native void prepareCubeImage(int id, int maxLevel, int faceWidth,
+        int faceHeight, int format);
+
+    public synchronized static native void uploadCube(int id, long srcPointer);
+
     public static void prepareImage(int id, int mipLevels, int width, int height,
         VulkanConstants.VkFormat format) {
         clearEmissionTiles(id);
@@ -130,6 +137,14 @@ public class TextureProxy {
         VulkanConstants.VkFormat vkFormat = VulkanConstants.VkFormat.fromGpuFormat(format);
         if (vkFormat != null) {
             prepareImage(id, mipLevels, width, height, vkFormat);
+        }
+    }
+
+    public static void prepareCubeImage(GpuFormat format, int id, int mipLevels, int faceWidth,
+        int faceHeight) {
+        VulkanConstants.VkFormat vkFormat = VulkanConstants.VkFormat.fromGpuFormat(format);
+        if (vkFormat != null) {
+            prepareCubeImage(id, mipLevels, faceWidth, faceHeight, vkFormat.getValue());
         }
     }
 }
