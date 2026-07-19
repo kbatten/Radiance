@@ -13,7 +13,7 @@ package com.radiance.client;
  */
 public final class DrawInterceptStats {
 
-    private static final long DUMP_INTERVAL_NANOS = 1_000_000_000L;
+    private static final long DUMP_INTERVAL_NANOS = 250_000_000L;
 
     private static long entered;
     private static long noState;
@@ -22,7 +22,10 @@ public final class DrawInterceptStats {
     private static long noVertexData;
     private static long noIndexData;
     private static long replayed;
-    private static long lastDumpNanos;
+    // Seeded at class load, not left at 0: otherwise the very first counter call is already
+    // DUMP_INTERVAL past "zero" and dumps immediately, burning the first report on an all-zero line
+    // recorded before any outcome was decided.
+    private static long lastDumpNanos = System.nanoTime();
     private static final java.util.Map<String, Long> others = new java.util.LinkedHashMap<>();
 
     private DrawInterceptStats() {
