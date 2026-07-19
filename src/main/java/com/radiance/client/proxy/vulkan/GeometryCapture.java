@@ -99,6 +99,48 @@ public final class GeometryCapture {
         record(destination.buffer(), destination.offset(), bytes);
     }
 
+    /**
+     * Record a completed mapped write. This is the route GUI geometry actually takes:
+     * {@code StagedVertexBuffer.uploadDrawsToBuffers} maps a slice, {@code put}s vertex bytes into
+     * {@code MappedView.data()}, closes it, then issues {@code copyToBuffer} into the real vertex or
+     * index buffer. Capturing at close means every write has landed.
+     *
+     * <p>Index 0 of the mapped buffer is {@code slice.offset()} of the underlying buffer, so the
+     * bytes are recorded at that offset. Read through a duplicate positioned at 0, since the caller's
+     * position has been advanced by its own puts.
+     */
+    public static void captureMapped(GpuBufferSlice slice, ByteBuffer data) {
+        if (slice == null || data == null) {
+            return;
+        }
+        ByteBuffer view = data.duplicate();
+        int length = (int) Math.min(view.capacity(), slice.length());
+        if (length <= 0) {
+            return;
+        }
+        view.position(0);
+        view.limit(length);
+        byte[] bytes = new byte[length];
+        view.get(bytes);
+        record(slice.buffer(), slice.offset(), bytes);
+    }
+
+    /**
+     * Carry captured bytes across a {@code CommandEncoder.copyToBuffer(source, destination)}, so a
+     * mapped write into a staging slice is still resolvable once it has been moved into the buffer a
+     * draw actually binds. Argument order confirmed from GlCommandEncoder, which passes the first
+     * slice as glCopyBufferSubData's readBuffer.
+     */
+    public static void recordCopy(GpuBufferSlice source, GpuBufferSlice destination) {
+        if (source == null || destination == null) {
+            return;
+        }
+        byte[] bytes = get(source);
+        if (bytes != null) {
+            record(destination.buffer(), destination.offset(), bytes);
+        }
+    }
+
     /** Record bytes landing in a buffer directly, e.g. via {@code CommandEncoder.writeToBuffer}. */
     public static void record(GpuBuffer buffer, long offset, byte[] bytes) {
         if (buffer == null || bytes == null) {

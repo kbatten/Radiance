@@ -66,4 +66,19 @@ public abstract class CommandEncoderMixins {
         // draw path must be able to resolve geometry from this route as well as from staging.
         GeometryCapture.captureWrite(destination, data);
     }
+
+    /**
+     * Carry captured bytes from a staging slice into the buffer a draw will actually bind.
+     * StagedVertexBuffer maps + writes a pooled staging slice, then moves it here. Argument order is
+     * (source, destination) -- confirmed from GlCommandEncoder, which passes the first slice as
+     * glCopyBufferSubData's readBuffer -- and is the reverse of writeToBuffer's convention.
+     */
+    @Inject(
+        method = "copyToBuffer(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;"
+            + "Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V",
+        at = @At("HEAD"))
+    private void radiance$captureCopyToBuffer(GpuBufferSlice source, GpuBufferSlice destination,
+        CallbackInfo ci) {
+        GeometryCapture.recordCopy(source, destination);
+    }
 }
