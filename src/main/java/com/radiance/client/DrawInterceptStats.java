@@ -21,6 +21,7 @@ public final class DrawInterceptStats {
     private static long invalidProgram;
     private static long noVertexData;
     private static long noIndexData;
+    private static long shaderUnavailable;
     private static long replayed;
     // Seeded at class load, not left at 0: otherwise the very first counter call is already
     // DUMP_INTERVAL past "zero" and dumps immediately, burning the first report on an all-zero line
@@ -71,6 +72,12 @@ public final class DrawInterceptStats {
         maybeDump();
     }
 
+    /** The native backend could not build this draw's shader, so vanilla GL keeps it. */
+    public static void shaderUnavailable() {
+        shaderUnavailable++;
+        maybeDump();
+    }
+
     /** The draw was packed and handed to the native backend. */
     public static void replayed() {
         replayed++;
@@ -101,6 +108,7 @@ public final class DrawInterceptStats {
             + " invalidProgram=" + invalidProgram
             + " noVertexData=" + noVertexData
             + " noIndexData=" + noIndexData
+            + " shaderUnavailable=" + shaderUnavailable
             + (others.isEmpty() ? "" : " | other draw paths: " + others));
     }
 }

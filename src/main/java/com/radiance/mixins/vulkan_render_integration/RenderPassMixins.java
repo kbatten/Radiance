@@ -176,6 +176,14 @@ public abstract class RenderPassMixins {
         }
 
         ShaderDefinition shader = ShaderRegistry.getOrCreate(program);
+        // The native backend could not build this shader -- its translated GLSL uses something the
+        // translator does not handle yet (samplerCube, for one). Leave the draw to Minecraft's own
+        // GL path instead of issuing it with an invalid native id. ShaderRegistry caches the
+        // definition, so this resolves once per program rather than retrying every frame.
+        if (shader.nativeId() < 0) {
+            DrawInterceptStats.shaderUnavailable();
+            return;
+        }
 
         int vertexId = BufferProxy.allocateBuffer();
         BufferProxy.initializeBuffer(vertexId, vertexData.length,
