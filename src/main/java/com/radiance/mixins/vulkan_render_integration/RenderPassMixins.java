@@ -20,7 +20,6 @@ import com.radiance.client.constant.Constants;
 import com.radiance.client.proxy.vulkan.BufferProxy;
 import com.radiance.client.proxy.vulkan.GeometryCapture;
 import com.radiance.client.proxy.vulkan.ShaderProxy;
-import com.radiance.client.proxy.vulkan.UniformCapture;
 import com.radiance.client.shader.ShaderDefinition;
 import com.radiance.client.shader.ShaderRegistry;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
@@ -43,8 +42,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * buffers, the built-in UBOs (by name) and sampler textures (by name) are all bound on the pass, then
  * {@code drawIndexed} issues the draw. This captures that per-draw state and, at {@code drawIndexed},
  * resolves the mod's shader from the pipeline, packs the native uniform blob from the captured UBO
- * bytes ({@link UniformCapture}), feeds the geometry + uniforms to the native backend and cancels the
- * GL draw.
+ * bytes ({@link GeometryCapture}), feeds the geometry + uniforms to the native backend and cancels
+ * the GL draw.
  *
  * <p>Runtime-validation notes (compile-first migration): the geometry is uploaded per draw via the
  * raw {@code BufferProxy} buffer API; per-draw native buffer allocation/recycling and firstIndex/

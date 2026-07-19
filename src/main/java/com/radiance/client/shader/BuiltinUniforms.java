@@ -10,7 +10,7 @@ import java.util.Map;
  * of truth mapping a uniform {@code name} to its {@code (block, std140 offset, kind, componentCount)}:
  * {@code ShaderRegistry} uses it to build the native uniform-blob field list (for whichever uniforms
  * a shader actually references), and {@code ShaderProxy} uses it to read each field's value from the
- * captured UBO bytes ({@code UniformCapture}) at draw time.
+ * captured UBO bytes ({@code GeometryCapture}) at draw time.
  *
  * <p>Offsets are taken directly from the vanilla UBO GLSL blocks
  * ({@code assets/minecraft/shaders/include/{dynamictransforms,projection,globals,light,fog}.glsl})

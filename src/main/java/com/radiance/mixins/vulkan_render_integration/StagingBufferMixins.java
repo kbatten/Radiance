@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 /**
  * 26.2 geometry capture. Vertex data does not reach {@code CommandEncoder.writeToBuffer} on a
  * discrete GPU: it is staged here and moved with {@code copyToBuffer}, so the
- * {@link com.radiance.client.proxy.vulkan.UniformCapture} hook never saw it and every draw bailed
+ * the writeToBuffer-based capture hook never saw it and every draw bailed
  * out at the vertex lookup.
  *
  * <p>Hooked on the abstract {@code StagingBuffer} rather than either implementation, so both

@@ -7,7 +7,6 @@ import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.radiance.client.proxy.vulkan.GeometryCapture;
 import com.radiance.client.proxy.vulkan.TextureProxy;
-import com.radiance.client.proxy.vulkan.UniformCapture;
 import java.nio.ByteBuffer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -52,18 +51,17 @@ public abstract class CommandEncoderMixins {
     }
 
     /**
-     * Capture buffer uploads (the built-in UBOs) so the RenderPass draw interception can read the
-     * actual uniform values without a GPU readback (counterpart to the writeToTexture mirror above).
+     * Mirror {@code writeToBuffer} uploads into {@link GeometryCapture} so the RenderPass draw
+     * interception can read the actual uniform and geometry bytes without a GPU readback (counterpart
+     * to the writeToTexture mirror above). This is one of four buffer-write routes GeometryCapture
+     * covers; the built-in {@code Projection} UBO and the shared quad index buffer arrive here, while
+     * others (e.g. {@code DynamicTransforms}) arrive via the mapped-view route.
      */
     @Inject(
         method = "writeToBuffer(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;Ljava/nio/ByteBuffer;)V",
         at = @At("HEAD"))
     private void radiance$captureWriteToBuffer(GpuBufferSlice destination, ByteBuffer data,
         CallbackInfo ci) {
-        UniformCapture.capture(destination, data);
-        // Also mirror into GeometryCapture: not everything is staged. The shared quad index buffer
-        // arrives here, and StagingBuffer$Cpu routes all of its uploads through writeToBuffer, so the
-        // draw path must be able to resolve geometry from this route as well as from staging.
         GeometryCapture.captureWrite(destination, data);
     }
 

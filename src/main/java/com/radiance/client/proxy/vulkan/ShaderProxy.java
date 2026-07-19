@@ -42,10 +42,19 @@ public final class ShaderProxy {
      * 26.2: uniform values no longer live in per-uniform GlUniforms -- they are in the built-in UBOs
      * bound to the draw. {@code boundUniforms} maps each UBO block name
      * ("Projection"/"DynamicTransforms"/"Globals"/"Lighting"/"Fog") to the {@link GpuBufferSlice}
-     * bound via {@code RenderPass.setUniform}; the CPU bytes for each slice were captured at
-     * {@code CommandEncoder.writeToBuffer} ({@link UniformCapture}). Each {@link ShaderField}'s value
-     * is read from its built-in UBO at the std140 offset ({@link BuiltinUniforms}) and packed into the
-     * mod's native blob at {@code field.offset()}; sampler fields take the draw's bound textures.
+     * bound via {@code RenderPass.setUniform}. Each {@link ShaderField}'s value is read from its
+     * built-in UBO at the std140 offset ({@link BuiltinUniforms}) and packed into the mod's native
+     * blob at {@code field.offset()}; sampler fields take the draw's bound textures.
+     *
+     * <p>The CPU bytes come from {@link GeometryCapture}, not {@link UniformCapture}. The built-in
+     * UBOs do not all travel one route: {@code Projection} is written with
+     * {@code CommandEncoder.writeToBuffer} (which UniformCapture hooks), but {@code DynamicTransforms}
+     * -- carrying ModelViewMat -- is written through {@code DynamicUniformStorage.writeUniform}, which
+     * maps the slice and writes through {@code MappedView} instead. UniformCapture never saw that, so
+     * ModelViewMat resolved to a zero matrix and every gui vertex collapsed to the origin
+     * ({@code gl_Position = ProjMat * ModelViewMat * ...}), which is a black screen even though the
+     * draw replayed. GeometryCapture already mirrors all four buffer-write routes (writeToBuffer,
+     * mapped view, copyToBuffer, createBuffer) and resolves sub-ranges, so it covers every UBO.
      */
     public static UniformHandle createUniform(ShaderDefinition shader,
         Map<String, GpuBufferSlice> boundUniforms, Object2IntMap<String> boundTextures,
@@ -64,7 +73,7 @@ public final class ShaderProxy {
             if (slice == null) {
                 continue;
             }
-            byte[] captured = UniformCapture.get(slice);
+            byte[] captured = GeometryCapture.get(slice);
             if (captured == null) {
                 continue;
             }
