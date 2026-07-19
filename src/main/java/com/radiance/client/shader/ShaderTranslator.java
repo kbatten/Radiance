@@ -16,6 +16,11 @@ public final class ShaderTranslator {
         "^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+[\\w\\d_]+(?:\\s*\\[[^]]*])?\\s+(\\w+)\\s*;\\s*$");
     private static final Pattern INPUT_OUTPUT_PATTERN = Pattern.compile(
         "^\\s*(in|out)\\s+([\\w\\d_]+)\\s+(\\w+)\\s*;\\s*$");
+    // Opening line of a uniform *block*, e.g. "layout(std140) uniform DynamicTransforms {".
+    // UNIFORM_PATTERN above only matches single-line uniform declarations (it requires a trailing
+    // ';'), so without this the whole block was passed through verbatim.
+    private static final Pattern UNIFORM_BLOCK_PATTERN = Pattern.compile(
+        "^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+\\w+\\s*\\{");
 
     private ShaderTranslator() {
     }
@@ -63,7 +68,26 @@ public final class ShaderTranslator {
             vertexStage ? nextVaryingLocations : new LinkedHashMap<>();
         int nextOutputLocation = vertexStage ? nextVaryingLocations.size() : 0;
 
+        // Depth inside a uniform block being dropped; 0 when not in one.
+        int uniformBlockDepth = 0;
+
         for (String line : source.split("\\R", -1)) {
+            // Drop uniform blocks entirely. The header already exposes every built-in member as
+            // "#define Name (uniforms.Name)", so leaving the block in place made the preprocessor
+            // rewrite the block's own declarations: "mat4 ModelViewMat;" became
+            // "mat4 (uniforms.ModelViewMat);", which is the "unexpected LEFT_PAREN, expecting
+            // IDENTIFIER" the native compiler reported. References inside main() resolve through
+            // those defines, so nothing else needs the declarations.
+            if (uniformBlockDepth > 0) {
+                uniformBlockDepth += braceDelta(line);
+                continue;
+            }
+            if (UNIFORM_BLOCK_PATTERN.matcher(line)
+                .find()) {
+                uniformBlockDepth = braceDelta(line);
+                continue;
+            }
+
             if (VERSION_PATTERN.matcher(line)
                 .matches()) {
                 continue;
@@ -127,6 +151,20 @@ public final class ShaderTranslator {
         }
 
         return new StageResult(builder.toString(), nextVaryingLocations);
+    }
+
+    /** Net brace nesting introduced by {@code line}: '{' counts +1, '}' counts -1. */
+    private static int braceDelta(String line) {
+        int delta = 0;
+        for (int i = 0; i < line.length(); i++) {
+            char character = line.charAt(i);
+            if (character == '{') {
+                delta++;
+            } else if (character == '}') {
+                delta--;
+            }
+        }
+        return delta;
     }
 
     private static String buildHeader(List<ShaderField> fields) {
