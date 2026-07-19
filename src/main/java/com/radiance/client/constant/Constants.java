@@ -87,7 +87,14 @@ public class Constants {
     // formats have no exact 26.2 attribute-order match and are mapped to the closest distinct
     // format as placeholders (flagged inline) -- to be revisited with the entity/particle work.
     public enum VertexFormats {
-        POSITION_COLOR_TEXTURE_LIGHT_NORMAL(DefaultVertexFormat.BLOCK, 0),
+        // 26.2 dropped Normal from BLOCK, leaving it (Position, Color, UV0, UV2) -- byte-identical
+        // to POSITION_COLOR_TEX_LIGHTMAP below. VertexFormat has value-based equals/hashCode, so
+        // mapping both collided ("Duplicate key VertexFormat[Position, Color, UV0, UV2]") and no
+        // runtime information can tell them apart any more. BLOCK-shaped geometry therefore
+        // resolves to POSITION_COLOR_TEXTURE_LIGHT (9), which describes that layout exactly.
+        // No 26.2 format is (Position, Color, UV0, UV2, Normal), so this native id has no counter-
+        // part and is left unmapped rather than pointed at a format it does not describe.
+        POSITION_COLOR_TEXTURE_LIGHT_NORMAL(null, 0),
         POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL(DefaultVertexFormat.ENTITY, 1),
         // No exact 26.2 pos,tex,color,light format; placeholder pending entity/particle migration.
         POSITION_TEXTURE_COLOR_LIGHT(DefaultVertexFormat.PARTICLE, 2),
@@ -102,9 +109,12 @@ public class Constants {
         POSITION_TEXTURE_COLOR_NORMAL(DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL, 11),
         PBR_TRIANGLE(PBRVertexFormats.PBR_TRIANGLE, 12);
 
+        // Entries with no 26.2 counterpart carry a null format and are skipped: they exist only to
+        // keep the native id numbering stable.
         private static final Map<VertexFormat, Integer>
             BY_VERTEX_FORMAT =
             Collections.unmodifiableMap(Arrays.stream(values())
+                .filter(format -> format.getVertexFormat() != null)
                 .collect(
                     Collectors.toMap(VertexFormats::getVertexFormat, VertexFormats::getValue)));
 
@@ -116,8 +126,21 @@ public class Constants {
             this.value = value;
         }
 
+        /**
+         * Native layout id for {@code vertexFormat}.
+         *
+         * <p>26.2 defines more formats than are mapped here, and the result is unboxed straight
+         * into a native call, so an unmapped format used to surface as a bare NPE from inside
+         * shader registration. Name the format instead -- the fix is always to add it above, and
+         * the message says which one to add.
+         */
         public static int getValue(VertexFormat vertexFormat) {
-            return BY_VERTEX_FORMAT.get(vertexFormat);
+            Integer value = BY_VERTEX_FORMAT.get(vertexFormat);
+            if (value == null) {
+                throw new IllegalArgumentException(
+                    "No native vertex format id is mapped for " + vertexFormat);
+            }
+            return value;
         }
 
         public VertexFormat getVertexFormat() {
