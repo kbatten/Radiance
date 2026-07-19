@@ -6,6 +6,7 @@ import com.radiance.client.RadianceClient;
 import com.radiance.client.constant.Constants;
 import com.radiance.client.proxy.vulkan.ShaderProxy;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IShaderProgramExt;
+import net.minecraft.client.renderer.ShaderDefines;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -33,13 +34,13 @@ public final class ShaderRegistry {
     private ShaderRegistry() {
     }
 
-    public static ShaderDefinition getOrCreate(GlProgram shaderProgram) {
+    public static ShaderDefinition getOrCreate(GlProgram shaderProgram, ShaderDefines defines) {
         ShaderDefinition cached = CACHE.get(shaderProgram);
         if (cached != null) {
             return cached;
         }
 
-        ShaderDefinition created = create(shaderProgram);
+        ShaderDefinition created = create(shaderProgram, defines);
         CACHE.put(shaderProgram, created);
         return created;
     }
@@ -48,7 +49,7 @@ public final class ShaderRegistry {
         CACHE.clear();
     }
 
-    private static ShaderDefinition create(GlProgram shaderProgram) {
+    private static ShaderDefinition create(GlProgram shaderProgram, ShaderDefines defines) {
         IShaderProgramExt ext = (IShaderProgramExt) (Object) shaderProgram;
         VertexFormat vertexFormat = ext.radiance$getVertexFormat();
         String vertexSource = ext.radiance$getVertexSource();
@@ -63,8 +64,29 @@ public final class ShaderRegistry {
         ShaderTranslator.Result result = ShaderTranslator.translate(vertexFormat, vertexSource,
             fragmentSource, fields);
 
+        // The pipeline's ShaderDefines drive the #if branches in the captured source (e.g. IS_GUI in
+        // core/text excludes the UV2 attribute and the fog varyings). MC compiles the shader with
+        // these defined; the mod captures the pre-injection source, so they must be handed to the
+        // native compiler or the wrong branch is compiled -- for gui_text that left "in ivec2 UV2;"
+        // with no matching vertex attribute, which fails as "SPIR-V requires location". Split the
+        // record's value defines (name -> value) and bare flags (name, no value) into the parallel
+        // name/value arrays registerShader forwards to shaderc's AddMacroDefinition.
+        String[] defineNames = new String[defines.values().size() + defines.flags().size()];
+        String[] defineValues = new String[defineNames.length];
+        int defineCount = 0;
+        for (Map.Entry<String, String> value : defines.values().entrySet()) {
+            defineNames[defineCount] = value.getKey();
+            defineValues[defineCount] = value.getValue();
+            defineCount++;
+        }
+        for (String flag : defines.flags()) {
+            defineNames[defineCount] = flag;
+            defineValues[defineCount] = "";
+            defineCount++;
+        }
+
         String key = buildKey(shaderName, vertexFormat, result.vertexSource(),
-            result.fragmentSource(), fields);
+            result.fragmentSource(), fields, defines);
         Path directory = getShaderDirectory();
         Path vertexPath = directory.resolve(key + ".vert");
         Path fragmentPath = directory.resolve(key + ".frag");
@@ -77,8 +99,8 @@ public final class ShaderRegistry {
             result.uniformBufferSize(),
             vertexPath.toString(),
             fragmentPath.toString(),
-            new String[0],
-            new String[0]);
+            defineNames,
+            defineValues);
         return new ShaderDefinition(key, shaderName, nativeId, result.uniformBufferSize(), fields);
     }
 
@@ -185,13 +207,20 @@ public final class ShaderRegistry {
     }
 
     private static String buildKey(String shaderName, VertexFormat vertexFormat, String vertexSource,
-        String fragmentSource, List<ShaderField> fields) {
+        String fragmentSource, List<ShaderField> fields, ShaderDefines defines) {
+        // Defines are part of the identity: the translated source is byte-identical across variants
+        // of one shader (the translator does not evaluate #if -- the native compiler does with these
+        // defines), so without them two variants like gui_text and gui_text_grayscale would hash to
+        // the same key, collide on the same .vert/.frag files and native shader id, and one would be
+        // compiled with the other's defines.
         StringBuilder builder = new StringBuilder(shaderName).append('\n')
             .append(vertexFormat)
             .append('\n')
             .append(vertexSource)
             .append('\n')
             .append(fragmentSource)
+            .append('\n')
+            .append(defines.asSourceDirectives())
             .append('\n');
         for (ShaderField field : fields) {
             builder.append(field.name())

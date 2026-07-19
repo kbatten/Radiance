@@ -174,7 +174,8 @@ public abstract class RenderPassMixins {
             return;
         }
 
-        ShaderDefinition shader = ShaderRegistry.getOrCreate(program);
+        ShaderDefinition shader = ShaderRegistry.getOrCreate(program,
+            this.radiance$pipeline.getShaderDefines());
         // The native backend could not build this shader -- its translated GLSL uses something the
         // translator does not handle yet (samplerCube, for one). Leave the draw to Minecraft's own
         // GL path instead of issuing it with an invalid native id. ShaderRegistry caches the
