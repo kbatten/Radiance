@@ -19,6 +19,7 @@ import com.radiance.client.DrawInterceptStats;
 import com.radiance.client.constant.Constants;
 import com.radiance.client.proxy.vulkan.BufferProxy;
 import com.radiance.client.proxy.vulkan.GeometryCapture;
+import com.radiance.client.proxy.vulkan.PipelineStateProxy;
 import com.radiance.client.proxy.vulkan.ShaderProxy;
 import com.radiance.client.shader.ShaderDefinition;
 import com.radiance.client.shader.ShaderRegistry;
@@ -98,6 +99,32 @@ public abstract class RenderPassMixins {
             glId = glTexture.glId();
         }
         this.radiance$textures.put(name, glId);
+    }
+
+    // Scissor has to be captured from the front RenderPass, not the GL state manager. MC applies it
+    // lazily: enableScissor/disableScissor only mutate the pass's ScissorState, and the actual
+    // GlStateManager._scissorBox/_enableScissorTest calls (which GlStateManagerMixins redirects to the
+    // native overlay scissor) fire later inside the backend's per-draw trySetup. radiance$onDrawIndexed
+    // cancels the front drawIndexed before it delegates to the backend, so that trySetup never runs for
+    // a replayed draw and the native scissor would otherwise stay at whatever the pass-start
+    // createRenderPass left it -- the full render area -- leaving scissored content (scrollable lists,
+    // tooltips) unclipped in the Vulkan overlay. Driving the native scissor here, before the replayed
+    // draw records into the overlay command buffer, restores the clip.
+    //
+    // The args are the same GL bottom-left framebuffer values _scissorBox receives (the backend passes
+    // the ScissorState straight through), so they map onto ViewportState exactly as the
+    // GlStateManagerMixins._scissorBox redirect does; setOverlayScissor performs the GL->Vulkan Y-flip.
+    // disableScissor resets to the full swapchain extent, matching MC's reset-to-render-area intent for
+    // the full-screen GUI pass.
+    @Inject(method = "enableScissor(IIII)V", at = @At("HEAD"))
+    private void radiance$onEnableScissor(int x, int y, int width, int height, CallbackInfo ci) {
+        PipelineStateProxy.ViewportState.setScissor(x, y, width, height);
+        PipelineStateProxy.ViewportState.setScissorEnabled(true);
+    }
+
+    @Inject(method = "disableScissor()V", at = @At("HEAD"))
+    private void radiance$onDisableScissor(CallbackInfo ci) {
+        PipelineStateProxy.ViewportState.setScissorEnabled(false);
     }
 
     // Diagnostic only -- 26.2's RenderPass has nine draw entry points and only drawIndexed below is
