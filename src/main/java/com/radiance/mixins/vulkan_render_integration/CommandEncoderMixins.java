@@ -52,6 +52,39 @@ public abstract class CommandEncoderMixins {
     }
 
     /**
+     * Mirror the {@code writeToTexture(GpuTexture, ByteBuffer, ...)} route -- the second texture-write
+     * path, taken when pixels arrive already packed in a direct buffer rather than a NativeImage. The
+     * unihex font provider ({@code UnihexProvider$Glyph.upload}) uploads every unicode/CJK glyph this
+     * way, so without this only the ASCII bitmap font (handled by the copyBufferToTexture mirror below)
+     * would render; unicode glyphs would sample an empty sheet and discard.
+     *
+     * <p>Args decoded from GlCommandEncoder: {@code (mipLevel, depthOrLayer, destX, destY, width,
+     * height)}, with the source tightly packed at {@code width} row length (GL sets UNPACK_ROW_LENGTH =
+     * width, skip rows/pixels = 0). The buffer is filled before this call, so its address is handed
+     * straight to {@code queueUpload}, which copies synchronously -- no temp buffer, and MC is free to
+     * free the source afterwards. Layer 0 only (2D), matching the reasoning on the cube route below.
+     */
+    @Inject(
+        method = "writeToTexture(Lcom/mojang/blaze3d/textures/GpuTexture;Ljava/nio/ByteBuffer;IIIIII)V",
+        at = @At("HEAD"))
+    private void radiance$mirrorWriteToTextureBuffer(GpuTexture destination, ByteBuffer source,
+        int mipLevel, int depthOrLayer, int destX, int destY, int width, int height,
+        CallbackInfo ci) {
+        if (depthOrLayer != 0 || !(destination instanceof GlTexture glTexture) || !source.isDirect()) {
+            return;
+        }
+        TextureProxy.queueUpload(
+            MemoryUtil.memAddress(source), // srcPointer -- direct buffer at its current position
+            source.remaining(),            // srcSizeInBytes
+            width,                         // srcRowPixels (GL UNPACK_ROW_LENGTH == width here)
+            glTexture.glId(),              // dstId
+            0, 0,                          // srcOffsetX, srcOffsetY (whole source)
+            destX, destY,                  // dstOffsetX, dstOffsetY
+            width, height,                 // width, height
+            mipLevel);                     // level
+    }
+
+    /**
      * Mirror {@code writeToBuffer} uploads into {@link GeometryCapture} so the RenderPass draw
      * interception can read the actual uniform and geometry bytes without a GPU readback (counterpart
      * to the writeToTexture mirror above). This is one of four buffer-write routes GeometryCapture
