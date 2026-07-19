@@ -48,6 +48,9 @@ public final class GeometryCapture {
     /** Bytes snapshotted at tryAppend HEAD, waiting for the handle the RETURN hook will supply. */
     private static final ThreadLocal<byte[]> PENDING = new ThreadLocal<>();
 
+    /** Bytes snapshotted at createBuffer HEAD, waiting for the buffer the RETURN hook will supply. */
+    private static final ThreadLocal<byte[]> PENDING_CREATE = new ThreadLocal<>();
+
     private GeometryCapture() {
     }
 
@@ -97,6 +100,41 @@ public final class GeometryCapture {
         byte[] bytes = new byte[view.remaining()];
         view.get(bytes);
         record(destination.buffer(), destination.offset(), bytes);
+    }
+
+    /**
+     * Snapshot the initial contents handed to {@code GpuDevice.createBuffer(Supplier, int,
+     * ByteBuffer)}. Bytes baked in at buffer creation never pass through any upload route, so
+     * without this they are invisible to capture.
+     *
+     * <p>This is how the shared sequential index buffer arrives.
+     * {@code RenderSystem$AutoStorageIndexBuffer.ensureStorage} generates the index pattern into a
+     * {@code memAlloc}'d ByteBuffer, flips it and creates the buffer from it in one call -- no
+     * writeToBuffer, no copyToBuffer, no mapped view. Every unsorted draw uses that buffer
+     * ({@code getExecuteInfo} takes the sequential-buffer branch whenever quadSorting is null), so
+     * missing it meant the index lookup failed on the large majority of draws while the vertex
+     * lookup succeeded.
+     *
+     * <p>Taken at HEAD and bound at RETURN rather than read from the argument at RETURN: the
+     * implementation is free to consume the buffer, which would leave nothing to read.
+     */
+    public static void stageCreate(ByteBuffer data) {
+        if (data == null) {
+            return;
+        }
+        ByteBuffer view = data.slice();
+        byte[] bytes = new byte[view.remaining()];
+        view.get(bytes);
+        PENDING_CREATE.set(bytes);
+    }
+
+    /** Bind the bytes snapshotted by {@link #stageCreate} to the buffer createBuffer returned. */
+    public static void bindCreated(GpuBuffer buffer) {
+        byte[] bytes = PENDING_CREATE.get();
+        PENDING_CREATE.remove();
+        if (buffer != null && bytes != null) {
+            record(buffer, 0L, bytes);
+        }
     }
 
     /**
