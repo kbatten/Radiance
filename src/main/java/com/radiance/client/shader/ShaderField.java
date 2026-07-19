@@ -7,11 +7,19 @@ public record ShaderField(String name, String fieldName, Kind kind, int componen
         INT,
         FLOAT,
         MATRIX,
-        SAMPLER
+        SAMPLER,
+        // A samplerCube. Packed identically to SAMPLER (a uint bindless index into the cube array), but
+        // resolved against a separate cubeTextures[] binding because GLSL cannot index a sampler2D[]
+        // with a cube type. The panorama background is the only cube sampler in 26.2's core shaders.
+        SAMPLER_CUBE
     }
 
     public boolean isSampler() {
-        return kind == Kind.SAMPLER;
+        return kind == Kind.SAMPLER || kind == Kind.SAMPLER_CUBE;
+    }
+
+    public boolean isCubeSampler() {
+        return kind == Kind.SAMPLER_CUBE;
     }
 
     public String glslType() {
@@ -39,7 +47,7 @@ public record ShaderField(String name, String fieldName, Kind kind, int componen
                 default -> throw new IllegalStateException(
                     "Unsupported matrix size: " + componentCount);
             };
-            case SAMPLER -> "uint";
+            case SAMPLER, SAMPLER_CUBE -> "uint";
         };
     }
 }

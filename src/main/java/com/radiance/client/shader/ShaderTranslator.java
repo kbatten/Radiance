@@ -183,10 +183,18 @@ public final class ShaderTranslator {
     }
 
     private static String buildHeader(List<ShaderField> fields) {
+        boolean hasCubeSampler = fields.stream().anyMatch(ShaderField::isCubeSampler);
         StringBuilder builder = new StringBuilder();
         builder.append("#version 460\n");
         builder.append("#extension GL_EXT_nonuniform_qualifier : enable\n\n");
         builder.append("layout(set = 0, binding = 0) uniform sampler2D textures[];\n");
+        // The cube bindless array shares set 0 with the sampler2D array (binding 0) and the composite
+        // image (binding 1); it lives at binding 2, matching the native overlay descriptor layout.
+        // Emitted only when a cube sampler is present so ordinary shaders do not declare it. Indexed by
+        // GL id, exactly like textures[] -- the packed uint index is the same for both.
+        if (hasCubeSampler) {
+            builder.append("layout(set = 0, binding = 2) uniform samplerCube cubeTextures[];\n");
+        }
         builder.append("layout(std140, set = 1, binding = 0) uniform Uniforms {\n");
         for (ShaderField field : fields) {
             builder.append("    ")
@@ -197,7 +205,13 @@ public final class ShaderTranslator {
         }
         builder.append("} uniforms;\n\n");
         for (ShaderField field : fields) {
-            if (field.isSampler()) {
+            if (field.isCubeSampler()) {
+                builder.append("#define ")
+                    .append(field.name())
+                    .append(" cubeTextures[nonuniformEXT(int(uniforms.")
+                    .append(field.fieldName())
+                    .append("))]\n");
+            } else if (field.isSampler()) {
                 builder.append("#define ")
                     .append(field.name())
                     .append(" textures[nonuniformEXT(int(uniforms.")

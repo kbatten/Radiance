@@ -19,13 +19,16 @@ import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 public final class ShaderRegistry {
 
+    // Group 1 is the sampler type (sampler2D, samplerCube, ...), group 2 the name. The type is needed
+    // to route samplerCube uniforms to the cube bindless array rather than the sampler2D one.
     private static final Pattern SAMPLER_UNIFORM_PATTERN = Pattern.compile(
-        "^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+sampler\\w+\\s+(\\w+)\\s*;\\s*$");
+        "^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+(sampler\\w+)\\s+(\\w+)\\s*;\\s*$");
     private static final Pattern SAMPLER_SLOT_PATTERN = Pattern.compile("\\bSampler(\\d+)\\b");
 
     private static final Map<GlProgram, ShaderDefinition> CACHE =
@@ -126,13 +129,16 @@ public final class ShaderRegistry {
             offset += size;
         }
 
+        LinkedHashSet<String> cubeSamplerNames = new LinkedHashSet<>();
         List<String> resolvedSamplerNames = resolveSamplerNames(List.of(), vertexSource,
-            fragmentSource);
+            fragmentSource, cubeSamplerNames);
         for (int i = 0; i < resolvedSamplerNames.size(); i++) {
             String samplerName = resolvedSamplerNames.get(i);
+            ShaderField.Kind kind = cubeSamplerNames.contains(samplerName)
+                ? ShaderField.Kind.SAMPLER_CUBE : ShaderField.Kind.SAMPLER;
             offset = align(offset, Integer.BYTES);
             fields.add(new ShaderField(samplerName, samplerName + "Index",
-                ShaderField.Kind.SAMPLER, 1, offset, Integer.BYTES,
+                kind, 1, offset, Integer.BYTES,
                 getSamplerSlot(samplerName, i)));
             offset += Integer.BYTES;
         }
@@ -141,18 +147,26 @@ public final class ShaderRegistry {
     }
 
     private static List<String> resolveSamplerNames(List<String> declaredSamplerNames,
-        String vertexSource, String fragmentSource) {
+        String vertexSource, String fragmentSource, Set<String> cubeNamesOut) {
         LinkedHashSet<String> resolved = new LinkedHashSet<>(declaredSamplerNames);
-        collectSamplerNames(vertexSource, resolved);
-        collectSamplerNames(fragmentSource, resolved);
+        collectSamplerNames(vertexSource, resolved, cubeNamesOut);
+        collectSamplerNames(fragmentSource, resolved, cubeNamesOut);
         return List.copyOf(resolved);
     }
 
-    private static void collectSamplerNames(String source, LinkedHashSet<String> names) {
+    private static void collectSamplerNames(String source, LinkedHashSet<String> names,
+        Set<String> cubeNames) {
         for (String line : source.split("\\R", -1)) {
             Matcher uniformMatcher = SAMPLER_UNIFORM_PATTERN.matcher(line);
             if (uniformMatcher.matches()) {
-                names.add(uniformMatcher.group(1));
+                String samplerType = uniformMatcher.group(1);
+                String samplerName = uniformMatcher.group(2);
+                names.add(samplerName);
+                // samplerCube (and any future samplerCubeArray) resolve against the cube bindless
+                // array; only the declaration carries the type, bare SamplerN references below do not.
+                if (samplerType.endsWith("Cube")) {
+                    cubeNames.add(samplerName);
+                }
             }
 
             Matcher samplerMatcher = SAMPLER_SLOT_PATTERN.matcher(line);
@@ -176,7 +190,7 @@ public final class ShaderRegistry {
 
     private static int getAlignment(ShaderField.Kind kind, int componentCount) {
         return switch (kind) {
-            case SAMPLER -> Integer.BYTES;
+            case SAMPLER, SAMPLER_CUBE -> Integer.BYTES;
             case INT, FLOAT -> switch (componentCount) {
                 case 1 -> Integer.BYTES;
                 case 2 -> Integer.BYTES * 2;
@@ -190,7 +204,7 @@ public final class ShaderRegistry {
 
     private static int getSize(ShaderField.Kind kind, int componentCount) {
         return switch (kind) {
-            case SAMPLER -> Integer.BYTES;
+            case SAMPLER, SAMPLER_CUBE -> Integer.BYTES;
             case INT, FLOAT -> switch (componentCount) {
                 case 1 -> Integer.BYTES;
                 case 2 -> Integer.BYTES * 2;
