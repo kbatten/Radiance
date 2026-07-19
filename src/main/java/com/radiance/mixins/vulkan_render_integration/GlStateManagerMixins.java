@@ -70,20 +70,23 @@ public class GlStateManagerMixins {
     // endregion
 
     // region <PipelineStateProxy.ColorBlendState>
-    @Inject(method = "_disableBlend()V",
+    // 26.2 made blend state per-attachment: _enableBlend/_disableBlend take an index into
+    // GlStateManager.BLEND[]. PipelineStateProxy models a single colour attachment, so the index is
+    // accepted and ignored, preserving the previous global behaviour.
+    @Inject(method = "_disableBlend(I)V",
         at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V", shift = At.Shift.AFTER),
         cancellable = true,
         remap = false)
-    private static void redirectDisableBlend(CallbackInfo ci) {
+    private static void redirectDisableBlend(int attachment, CallbackInfo ci) {
         PipelineStateProxy.ColorBlendState.setBlendEnable(false);
         ci.cancel();
     }
 
-    @Inject(method = "_enableBlend()V",
+    @Inject(method = "_enableBlend(I)V",
         at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V", shift = At.Shift.AFTER),
         cancellable = true,
         remap = false)
-    private static void redirectEnableBlend(CallbackInfo ci) {
+    private static void redirectEnableBlend(int attachment, CallbackInfo ci) {
         PipelineStateProxy.ColorBlendState.setBlendEnable(true);
         ci.cancel();
     }
@@ -114,13 +117,18 @@ public class GlStateManagerMixins {
         ci.cancel();
     }
 
-    @Inject(method = "_colorMask(ZZZZ)V",
+    // 26.2 replaced the four booleans with a bitmask applied to every draw buffer. Decoded from
+    // GlStateManager._colorMask(int), which feeds GL33C.glColorMaski as
+    // (mask & 1)=red, (mask & 2)=green, (mask & 4)=blue, (mask & 8)=alpha.
+    // Note 26.2 also has an indexed _colorMask(II); PipelineStateProxy is single-attachment, so
+    // only the all-buffers form is intercepted here.
+    @Inject(method = "_colorMask(I)V",
         at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;assertOnRenderThread()V", shift = At.Shift.AFTER),
         cancellable = true,
         remap = false)
-    private static void redirectBlendEquation(boolean red, boolean green, boolean blue,
-        boolean alpha, CallbackInfo ci) {
-        PipelineStateProxy.ColorBlendState.glSetColorWriteMask(red, green, blue, alpha);
+    private static void redirectColorMask(int mask, CallbackInfo ci) {
+        PipelineStateProxy.ColorBlendState.glSetColorWriteMask((mask & 1) != 0, (mask & 2) != 0,
+            (mask & 4) != 0, (mask & 8) != 0);
         ci.cancel();
     }
 

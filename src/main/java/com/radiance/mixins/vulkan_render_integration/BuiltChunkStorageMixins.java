@@ -13,6 +13,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * 26.2: {@code BuiltChunkStorage} -> {@code ViewArea}. createChunks/init -> the ViewArea
@@ -41,8 +42,11 @@ public class BuiltChunkStorageMixins implements IViewAreaExt {
         ChunkProxy.setStorage(self);
     }
 
-    @Inject(method = "repositionCamera(Lnet/minecraft/core/SectionPos;)V", at = @At(value = "HEAD"))
-    private void updateChunkStorageSectionPos(SectionPos cameraSectionPos, CallbackInfo ci) {
+    // 26.2: repositionCamera returns boolean (whether the camera section actually moved), so the
+    // callback must be CallbackInfoReturnable to match the target's return type.
+    @Inject(method = "repositionCamera(Lnet/minecraft/core/SectionPos;)Z", at = @At(value = "HEAD"))
+    private void updateChunkStorageSectionPos(SectionPos cameraSectionPos,
+        CallbackInfoReturnable<Boolean> cir) {
         ChunkProxy.updateSectionPos(cameraSectionPos);
     }
 
