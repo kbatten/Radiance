@@ -14,8 +14,12 @@ public final class ShaderTranslator {
     private static final Pattern VERSION_PATTERN = Pattern.compile("^\\s*#version\\b.*$");
     private static final Pattern UNIFORM_PATTERN = Pattern.compile(
         "^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+[\\w\\d_]+(?:\\s*\\[[^]]*])?\\s+(\\w+)\\s*;\\s*$");
+    // Optional interpolation qualifier (group 1) before in/out: "flat out vec4 tint;" is common for
+    // integer-derived or flat-shaded varyings. Without capturing it the line failed to match and was
+    // passed through with no location qualifier, which Vulkan GLSL rejects ("SPIR-V requires location
+    // for user input/output"). The qualifier is preserved on the rewritten declaration.
     private static final Pattern INPUT_OUTPUT_PATTERN = Pattern.compile(
-        "^\\s*(in|out)\\s+([\\w\\d_]+)\\s+(\\w+)\\s*;\\s*$");
+        "^\\s*((?:flat|noperspective|smooth|centroid)\\s+)?(in|out)\\s+([\\w\\d_]+)\\s+(\\w+)\\s*;\\s*$");
     // Opening line of a uniform *block*, e.g. "layout(std140) uniform DynamicTransforms {".
     // UNIFORM_PATTERN above only matches single-line uniform declarations (it requires a trailing
     // ';'), so without this the whole block was passed through verbatim.
@@ -100,57 +104,68 @@ public final class ShaderTranslator {
 
             Matcher ioMatcher = INPUT_OUTPUT_PATTERN.matcher(line);
             if (ioMatcher.matches()) {
-                String qualifier = ioMatcher.group(1);
-                String type = ioMatcher.group(2);
-                String name = ioMatcher.group(3);
-                if ("in".equals(qualifier)) {
+                String interpolation = ioMatcher.group(1) == null ? "" : ioMatcher.group(1);
+                String direction = ioMatcher.group(2);
+                String type = ioMatcher.group(3);
+                String name = ioMatcher.group(4);
+                if ("in".equals(direction)) {
                     Integer location = inputLocations.get(name);
+                    if (location == null) {
+                        location = varyingLocations.get(name);
+                    }
                     if (location != null) {
-                        builder.append("layout(location = ")
-                            .append(location)
-                            .append(") in ")
-                            .append(type)
-                            .append(' ')
-                            .append(name)
-                            .append(';')
-                            .append('\n');
+                        appendLocated(builder, location, interpolation, "in", type, name);
                         continue;
                     }
-                    Integer varyingLocation = varyingLocations.get(name);
-                    if (varyingLocation != null) {
-                        builder.append("layout(location = ")
-                            .append(varyingLocation)
-                            .append(") in ")
-                            .append(type)
-                            .append(' ')
-                            .append(name)
-                            .append(';')
-                            .append('\n');
-                        continue;
-                    }
-                } else if ("out".equals(qualifier)) {
+                } else {
                     Integer location = outputLocations.get(name);
                     if (location == null) {
                         location = nextOutputLocation++;
                         outputLocations.put(name, location);
                     }
-                    builder.append("layout(location = ")
-                        .append(location)
-                        .append(") out ")
-                        .append(type)
-                        .append(' ')
-                        .append(name)
-                        .append(';')
-                        .append('\n');
+                    appendLocated(builder, location, interpolation, "out", type, name);
                     continue;
                 }
             }
 
-            builder.append(line)
+            builder.append(rewriteBuiltins(line))
                 .append('\n');
         }
 
         return new StageResult(builder.toString(), nextVaryingLocations);
+    }
+
+    /**
+     * Emit a relocated {@code in}/{@code out} declaration, preserving any interpolation qualifier:
+     * {@code layout(location = N) [flat ]in/out type name;}. The layout qualifier precedes the
+     * interpolation qualifier, per GLSL.
+     */
+    private static void appendLocated(StringBuilder builder, int location, String interpolation,
+        String direction, String type, String name) {
+        builder.append("layout(location = ")
+            .append(location)
+            .append(") ")
+            .append(interpolation)
+            .append(direction)
+            .append(' ')
+            .append(type)
+            .append(' ')
+            .append(name)
+            .append(";\n");
+    }
+
+    /**
+     * Rewrite GL builtins that Vulkan GLSL renames. {@code gl_VertexID}/{@code gl_InstanceID} became
+     * {@code gl_VertexIndex}/{@code gl_InstanceIndex} under {@code GL_KHR_vulkan_glsl}; a shader using
+     * the GL spelling (e.g. clouds, lines) otherwise fails with "undeclared identifier". Word-boundary
+     * matched so the already-correct {@code gl_VertexIndex} form is left untouched.
+     */
+    private static String rewriteBuiltins(String line) {
+        if (line.indexOf("gl_VertexID") < 0 && line.indexOf("gl_InstanceID") < 0) {
+            return line;
+        }
+        return line.replaceAll("\\bgl_VertexID\\b", "gl_VertexIndex")
+            .replaceAll("\\bgl_InstanceID\\b", "gl_InstanceIndex");
     }
 
     /** Net brace nesting introduced by {@code line}: '{' counts +1, '}' counts -1. */
