@@ -59,13 +59,13 @@ public final class DrawInterceptStats {
         maybeDump();
     }
 
-    /** UniformCapture had no bytes for the bound vertex buffer. */
+    /** GeometryCapture had no bytes covering this draw's vertex window. */
     public static void noVertexData() {
         noVertexData++;
         maybeDump();
     }
 
-    /** UniformCapture had no bytes for the bound index buffer. */
+    /** GeometryCapture had no bytes covering this draw's index window. */
     public static void noIndexData() {
         noIndexData++;
         maybeDump();

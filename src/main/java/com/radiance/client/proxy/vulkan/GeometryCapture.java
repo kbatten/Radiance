@@ -154,7 +154,21 @@ public final class GeometryCapture {
         return slice == null ? null : get(slice.buffer(), slice.offset(), slice.length());
     }
 
-    /** Bytes backing {@code [offset, offset + length)} of {@code buffer}, or {@code null}. */
+    /**
+     * Bytes backing {@code [offset, offset + length)} of {@code buffer}, clipped to what was actually
+     * captured. {@code null} only if nothing recorded overlaps the requested offset at all.
+     *
+     * <p>Clipping rather than requiring full coverage is essential, not a convenience. The buffers a
+     * draw binds come from {@code StagedVertexBuffer$GpuBufferPool.acquire}, which rounds the
+     * requested size up to a multiple of 256 KB and will hand back a recycled buffer up to 4x larger
+     * still. {@code GuiRenderer} then binds {@code vertexBuffer.slice()} -- the whole buffer -- so a
+     * few KB of real GUI geometry arrives as a request to read 256 KB or more. Demanding that the
+     * capture cover the entire request rejected every one of those, which is why the draw path
+     * reported noVertexData on 100% of draws even once the capture hooks were on the correct calls.
+     *
+     * <p>Returning a short buffer is safe: the caller reads geometry through the draw's own
+     * firstIndex/baseVertex window, which addresses only bytes MC actually wrote.
+     */
     public static byte[] get(GpuBuffer buffer, long offset, long length) {
         ConcurrentSkipListMap<Long, byte[]> byOffset = WRITES.get(buffer);
         if (byOffset == null) {
@@ -166,14 +180,17 @@ public final class GeometryCapture {
         }
         byte[] bytes = covering.getValue();
         long start = offset - covering.getKey();
-        long end = start + length;
-        if (start < 0 || end > bytes.length) {
-            return null; // the write does not reach far enough to cover the request
+        if (start < 0 || start >= bytes.length) {
+            return null; // the covering write ends before the requested offset begins
         }
-        if (start == 0 && end == bytes.length) {
+        long take = Math.min(length, bytes.length - start);
+        if (take <= 0) {
+            return null;
+        }
+        if (start == 0 && take == bytes.length) {
             return bytes;
         }
-        return Arrays.copyOfRange(bytes, (int) start, (int) end);
+        return Arrays.copyOfRange(bytes, (int) start, (int) (start + take));
     }
 
     public static void clear() {

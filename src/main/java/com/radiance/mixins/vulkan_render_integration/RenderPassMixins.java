@@ -14,6 +14,7 @@ import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import com.radiance.client.DrawInterceptStats;
 import com.radiance.client.constant.Constants;
 import com.radiance.client.proxy.vulkan.BufferProxy;
@@ -137,15 +138,34 @@ public abstract class RenderPassMixins {
             return;
         }
 
-        // Geometry comes from GeometryCapture, not UniformCapture: 26.2 stages vertex data through
-        // StagingBuffer and moves it with copyToBuffer, so it never reaches the writeToBuffer hook
-        // UniformCapture is built on. GeometryCapture also resolves ranges, which matters because a
-        // draw binds a sub-slice of a larger shared vertex buffer rather than a whole buffer.
-        byte[] vertexData = GeometryCapture.get(this.radiance$vertexBuffer);
-        byte[] indexData = GeometryCapture.get(this.radiance$indexBuffer, 0L,
-            this.radiance$indexBuffer.size());
+        // firstIndex and vertexOffset (baseVertex) both have to be honoured, not dropped: GuiRenderer
+        // packs every GUI draw of a frame into a single pooled vertex+index buffer and tells the
+        // draws apart purely by these two offsets. Binding the buffer without them would replay the
+        // frame's first mesh for every draw.
+        //
+        // The native draw entry takes neither offset, so the windows are cut here instead.
+        // glDrawElementsBaseVertex semantics make that exact: index i is read at firstIndex + i and
+        // addresses vertex (index + baseVertex), so cutting vertices from baseVertex leaves the
+        // stored index values directly valid against the cut array, with no rebasing.
+        VertexFormat[] vertexFormats = this.radiance$pipeline.getVertexFormatBindings();
+        if (vertexFormats.length == 0 || vertexFormats[0].getVertexSize() <= 0) {
+            DrawInterceptStats.noState();
+            return; // no vertex layout to compute a stride from -- let vanilla draw
+        }
+        int stride = vertexFormats[0].getVertexSize();
+
+        // Vertex data runs from baseVertex to the end of what was captured: the draw carries no
+        // vertex count, and GeometryCapture clips the request to the bytes MC actually wrote. That
+        // hands the backend some trailing vertices belonging to later draws, which is harmless --
+        // the index window below references only this draw's own.
+        byte[] vertexData = GeometryCapture.get(this.radiance$vertexBuffer.buffer(),
+            this.radiance$vertexBuffer.offset() + (long) vertexOffset * stride,
+            this.radiance$vertexBuffer.length());
+        byte[] indexData = GeometryCapture.get(this.radiance$indexBuffer,
+            (long) firstIndex * this.radiance$indexType.bytes,
+            (long) indexCount * this.radiance$indexType.bytes);
         // Split so the counters distinguish which of the two lookups failed -- vertex and index data
-        // reach UniformCapture by different routes, so they can fail independently.
+        // reach GeometryCapture by different routes, so they can fail independently.
         if (vertexData == null) {
             DrawInterceptStats.noVertexData();
             return;
