@@ -4,6 +4,7 @@ import com.mojang.blaze3d.opengl.GlStateManager;
 import com.radiance.client.constant.VulkanConstants;
 import com.radiance.client.proxy.vulkan.DrawCommandProxy;
 import com.radiance.client.proxy.vulkan.PipelineStateProxy;
+import org.joml.Vector4fc;
 import org.lwjgl.opengl.GL11;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -269,10 +270,28 @@ public class GlStateManagerMixins {
 
     // region <PipelineStateProxy.ClearState>
     // 26.2: the separate _clearColor/_clearDepth/_clearStencil setters were replaced by
-    // _clearBuffer(index, color) / _clearBuffer(depth) which pass the clear value directly, so the
-    // "set clear state, then _clear" model is gone; those setters are dropped (the _clear redirect
-    // below stays). Clear-color/depth handling to be revisited via _clearBuffer when the
-    // pipeline-state path is validated.
+    // _clearBuffer(index, color) / _clearBuffer(depth), which pass the clear value directly, so the
+    // "set clear state, then _clear" model is gone.
+    //
+    // These have to be hooked, not merely dropped. GlCommandEncoder.createRenderPass is where 26.2
+    // clears now: for each attachment whose RenderPassDescriptor carries a clearValue it calls
+    // _clearBuffer with that value. Leaving them unhooked meant no clear colour ever reached the
+    // backend, so the overlay kept the default it was initialised with -- opaque white -- and every
+    // _clear repainted the whole screen white over anything drawn.
+    @Inject(method = "_clearBuffer(ILorg/joml/Vector4fc;)V", at = @At("HEAD"), cancellable = true,
+        remap = false)
+    private static void redirectClearBufferColor(int index, Vector4fc color, CallbackInfo ci) {
+        PipelineStateProxy.ClearState.setClearColor(color.x(), color.y(), color.z(), color.w());
+        DrawCommandProxy.Overlay.glClear(GL11.GL_COLOR_BUFFER_BIT);
+        ci.cancel();
+    }
+
+    @Inject(method = "_clearBuffer(D)V", at = @At("HEAD"), cancellable = true, remap = false)
+    private static void redirectClearBufferDepth(double depth, CallbackInfo ci) {
+        PipelineStateProxy.ClearState.setClearDepth(depth);
+        DrawCommandProxy.Overlay.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+        ci.cancel();
+    }
     // endregion
 
     // region <DrawCommandProxy.Overlay>
