@@ -33,7 +33,6 @@
     "vulkan_render_integration.GameRendererMixins",
     "vulkan_render_integration.GlDeviceMixins",
     "vulkan_render_integration.GlStateManagerMixins",
-    "vulkan_render_integration.GLXMixins",
     "vulkan_render_integration.LightmapTextureManagerMixins",
     "vulkan_render_integration.MinecraftClientMixins",
     "vulkan_render_integration.MipmapHelperMixins",
