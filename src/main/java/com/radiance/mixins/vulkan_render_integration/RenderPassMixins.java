@@ -251,6 +251,8 @@ public abstract class RenderPassMixins {
         DrawInterceptStats.replayed();
         DrawInterceptStats.notePipeline(String.valueOf(this.radiance$pipeline.getLocation()),
             "drawIndexed", this.radiance$textures.toString());
+        DrawInterceptStats.noteVertex(String.valueOf(this.radiance$pipeline.getLocation()),
+            stride, vertexData);
         ci.cancel();
     }
 }
