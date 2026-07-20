@@ -63,18 +63,18 @@ public final class ShaderTranslator {
             .orElse(0);
         uniformBufferSize = Math.ceilDiv(uniformBufferSize, 16) * 16;
 
-        // TEMPORARY DIAGNOSTIC (always on in this build; the env-gated version did not propagate to the
-        // Windows game process). Any fragment that WOULD discard emits solid magenta and returns instead.
-        // Buttons (gui_textured/position_tex_color) replay with valid geometry and vertex alpha 255 yet
-        // stay invisible, so their fragments must be discarding on texture alpha 0 -- IF they rasterize.
-        // Button-shaped magenta appearing => the draw rasterizes and the atlas/UV/texture-alpha is the
-        // fault; no button magenta (while text glyph boxes DO go magenta, confirming this is active) =>
-        // the pipeline/geometry never reaches the framebuffer. Overlay outputs are named fragColor.
+        // TEMPORARY DIAGNOSTIC (always on in this build). The magenta run proved button draws DO
+        // rasterize (options-menu buttons showed magenta backgrounds) but discard on texture alpha 0 --
+        // the bound GUI atlas is transparent at the sprite UV. Now show the RGB that would be discarded,
+        // forced opaque, to tell "atlas has RGB but lost its alpha" (buttons show their grey graphics)
+        // from "atlas is fully empty" (buttons show black) from "wrong texture" (garbage/panorama). In
+        // every GUI fragment shader the discarded value is the local `vec4 color` (color = texture*vertex
+        // colour), so `color.rgb` is in scope at the discard and reads the sampled texel's RGB.
         String fragmentBody = fragment.source()
-            .replace("discard;", "{ fragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }");
+            .replace("discard;", "{ fragColor = vec4(color.rgb, 1.0); return; }");
         if (DEBUG_DISCARD_MARKER.compareAndSet(false, true)) {
             com.radiance.client.RadianceDebug.log(
-                "[ShaderDebug] discard->magenta ACTIVE (temporary diagnostic build)");
+                "[ShaderDebug] discard->show-rgb ACTIVE (temporary diagnostic build)");
         }
         String header = buildHeader(fields);
         return new Result(header + vertex.source(), header + fragmentBody, uniformBufferSize);
