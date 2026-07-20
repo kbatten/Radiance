@@ -38,7 +38,8 @@ public abstract class CommandEncoderMixins {
         at = @At("HEAD"))
     private void radiance$mirrorWriteToTexture(GpuTexture destination, NativeImage source,
         int mipLevel, int depthOrLayer, int destX, int destY, CallbackInfo ci) {
-        if (destination instanceof GlTexture glTexture) {
+        if (depthOrLayer == 0 && !radiance$isCubeDestination(destination)
+            && destination instanceof GlTexture glTexture) {
             TextureProxy.queueUpload(
                 source.getPointer(),                   // srcPointer
                 source.getPixelBytes().remaining(),    // srcSizeInBytes
@@ -70,7 +71,8 @@ public abstract class CommandEncoderMixins {
     private void radiance$mirrorWriteToTextureBuffer(GpuTexture destination, ByteBuffer source,
         int mipLevel, int depthOrLayer, int destX, int destY, int width, int height,
         CallbackInfo ci) {
-        if (depthOrLayer != 0 || !(destination instanceof GlTexture glTexture) || !source.isDirect()) {
+        if (depthOrLayer != 0 || radiance$isCubeDestination(destination)
+            || !(destination instanceof GlTexture glTexture) || !source.isDirect()) {
             return;
         }
         TextureProxy.queueUpload(
@@ -134,9 +136,12 @@ public abstract class CommandEncoderMixins {
      * appended source blob the same way from srcOffsetX/srcOffsetY, so the whole captured source image
      * is handed over with those skips rather than pre-sliced.
      *
-     * <p>Only layer 0 is mirrored: {@code queueUpload} targets a 2D image and takes no array-layer
-     * argument, so cube faces (the panorama) are left to the future samplerCube work -- its shader is
-     * unavailable today and falls back to GL regardless.
+     * <p>Only 2D layer-0 writes are mirrored. {@code queueUpload} targets a 2D image and takes no
+     * array-layer argument, so higher layers are skipped -- and a <em>cube</em> destination (the
+     * panorama) is skipped on every face, layer 0 included: its glId is never registered as a 2D image
+     * ({@link TextureUtilMixins} deliberately does not import it), so mirroring face 0 here would hand
+     * {@code queueUpload} an unregistered id and abort. The cube is imported and uploaded whole by
+     * {@code CubeMapTextureMixins} at {@code doLoad} instead.
      */
     @Inject(
         method = "copyBufferToTexture(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;IIII"
@@ -145,7 +150,8 @@ public abstract class CommandEncoderMixins {
     private void radiance$mirrorCopyBufferToTexture(GpuBufferSlice source, int srcSkipPixels,
         int srcSkipRows, int srcRowLength, int srcImageHeight, GpuTexture destination, int destX,
         int destY, int width, int height, int mipLevel, int depthOrLayer, CallbackInfo ci) {
-        if (depthOrLayer != 0 || !(destination instanceof GlTexture glTexture)) {
+        if (depthOrLayer != 0 || radiance$isCubeDestination(destination)
+            || !(destination instanceof GlTexture glTexture)) {
             return;
         }
         byte[] bytes = GeometryCapture.get(source);
@@ -168,5 +174,15 @@ public abstract class CommandEncoderMixins {
         } finally {
             MemoryUtil.memFree(src); // queueUpload copies synchronously, so this is safe to free now
         }
+    }
+
+    // A cube-map GpuTexture (the panorama) has six cube-compatible layers and is registered in the
+    // backend's separate samplerCube slot by CubeMapTextureMixins, never in the 2D bindless array. Its
+    // glId is unknown to the 2D queueUpload path, so none of the 2D write mirrors above may touch it --
+    // face 0 arrives with depthOrLayer == 0 and would otherwise slip past that guard and abort
+    // queueUpload on an unregistered id. Mirrors TextureUtilMixins.radiance$isCubeTexture.
+    private static boolean radiance$isCubeDestination(GpuTexture destination) {
+        return (destination.usage() & GpuTexture.USAGE_CUBEMAP_COMPATIBLE) != 0
+            && destination.getDepthOrLayers() == 6;
     }
 }
