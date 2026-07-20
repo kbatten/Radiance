@@ -28,8 +28,25 @@ public final class DrawInterceptStats {
     // recorded before any outcome was decided.
     private static long lastDumpNanos = System.nanoTime();
     private static final java.util.Map<String, Long> others = new java.util.LinkedHashMap<>();
+    // One-time-per-distinct-key breakdown of which RenderPipeline took which draw path (and, for
+    // replayed indexed draws, what textures it bound). Answers "does the button/GUI-sprite pipeline use
+    // the un-replayed non-indexed draw() path, or does it drawIndexed but sample the wrong slot?" --
+    // which the aggregate counters above cannot. Logged once per key so it never spams the frame loop.
+    private static final java.util.Set<String> seenPipelines = new java.util.HashSet<>();
 
     private DrawInterceptStats() {
+    }
+
+    /**
+     * Record, once per distinct (path, pipeline, extra) key, which draw path a RenderPipeline used.
+     * {@code extra} carries the bound texture map for indexed draws (name -> GL id) and is null for the
+     * others. Temporary diagnostic; strip with the rest of the scaffolding.
+     */
+    public static void notePipeline(String location, String path, String extra) {
+        String key = path + " " + location + (extra == null ? "" : " " + extra);
+        if (seenPipelines.add(key)) {
+            RadianceDebug.log("[DrawPipeline] " + key);
+        }
     }
 
     /**

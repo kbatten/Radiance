@@ -134,6 +134,7 @@ public abstract class RenderPassMixins {
     @Inject(method = "draw(IIII)V", at = @At("HEAD"))
     private void radiance$countDraw(int a, int b, int c, int d, CallbackInfo ci) {
         DrawInterceptStats.otherDraw("draw");
+        DrawInterceptStats.notePipeline(radiance$pipelineLoc(), "draw", null);
     }
 
     @Inject(method = "drawMultipleIndexed(Ljava/util/Collection;Lcom/mojang/blaze3d/buffers/GpuBuffer;"
@@ -142,6 +143,13 @@ public abstract class RenderPassMixins {
     private void radiance$countDrawMultipleIndexed(Collection<?> draws, GpuBuffer indexBuffer,
         IndexType indexType, Collection<String> uniforms, Object userData, CallbackInfo ci) {
         DrawInterceptStats.otherDraw("drawMultipleIndexed");
+        DrawInterceptStats.notePipeline(radiance$pipelineLoc(), "drawMultipleIndexed", null);
+    }
+
+    @Unique
+    private String radiance$pipelineLoc() {
+        return this.radiance$pipeline == null ? "<none>"
+            : String.valueOf(this.radiance$pipeline.getLocation());
     }
 
     @Inject(method = "drawIndexed", at = @At("HEAD"), cancellable = true)
@@ -241,6 +249,8 @@ public abstract class RenderPassMixins {
         }
 
         DrawInterceptStats.replayed();
+        DrawInterceptStats.notePipeline(String.valueOf(this.radiance$pipeline.getLocation()),
+            "drawIndexed", this.radiance$textures.toString());
         ci.cancel();
     }
 }
