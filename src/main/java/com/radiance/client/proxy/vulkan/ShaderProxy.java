@@ -71,15 +71,31 @@ public final class ShaderProxy {
             }
             GpuBufferSlice slice = boundUniforms.get(entry.block());
             if (slice == null) {
+                com.radiance.client.DrawInterceptStats.noteUniformMiss(shader.name(), field.name(),
+                    entry.block(), "no bound slice");
                 continue;
             }
             byte[] captured = GeometryCapture.get(slice);
             if (captured == null) {
+                com.radiance.client.DrawInterceptStats.noteUniformMiss(shader.name(), field.name(),
+                    entry.block(), "not captured");
                 continue;
             }
             ByteBuffer src = ByteBuffer.wrap(captured).order(ByteOrder.nativeOrder());
             putUniform(bb, field, src, entry.uboOffset());
         }
+        // Diagnostic: dump the resolved transform/colour uniforms once per shader so an
+        // invisible-but-replayed pipeline (e.g. gui_textured) can be diagnosed -- a zeroed
+        // ModelViewMat/ProjMat collapses every vertex to the origin.
+        StringBuilder dbg = new StringBuilder();
+        for (ShaderField field : shader.fields()) {
+            switch (field.name()) {
+                case "ModelViewMat", "ProjMat", "ColorModulator" -> dbg.append(field.name())
+                    .append("[0]=").append(bb.getFloat(field.offset())).append(' ');
+                default -> { }
+            }
+        }
+        com.radiance.client.DrawInterceptStats.noteUniformValues(shader.name(), dbg.toString());
         return new UniformHandle(MemoryUtil.memAddress(bb), shader.uniformBufferSize());
     }
 

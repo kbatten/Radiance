@@ -49,6 +49,35 @@ public final class DrawInterceptStats {
         }
     }
 
+    private static final java.util.Set<String> seenUniformMisses = new java.util.HashSet<>();
+
+    /**
+     * A non-sampler uniform field was left zero because its source UBO block was not bound on the draw
+     * ({@code reason="no bound slice"}) or GeometryCapture had no CPU bytes for the bound slice
+     * ({@code reason="not captured"}). A zeroed ModelViewMat/ProjMat collapses every vertex to the
+     * origin -> the draw rasterizes nothing, i.e. an invisible-but-replayed pipeline. Logged once per
+     * (shader, field). Temporary diagnostic; strip with the rest of the scaffolding.
+     */
+    public static void noteUniformMiss(String shaderName, String field, String block, String reason) {
+        if (seenUniformMisses.add(shaderName + " " + field)) {
+            RadianceDebug.log("[UniformMiss] " + shaderName + " " + field
+                + " (block " + block + ") " + reason);
+        }
+    }
+
+    private static final java.util.Set<String> seenUniformValues = new java.util.HashSet<>();
+
+    /**
+     * Dump the resolved transform/colour uniforms once per shader. If ModelViewMat[0] or ProjMat[0]
+     * comes out 0 for an invisible-but-replayed pipeline, its geometry collapsed to the origin; if they
+     * are sane and the pipeline is still invisible, the fault is elsewhere. Temporary diagnostic.
+     */
+    public static void noteUniformValues(String shaderName, String values) {
+        if (seenUniformValues.add(shaderName)) {
+            RadianceDebug.log("[UniformSample] " + shaderName + " " + values);
+        }
+    }
+
     /**
      * drawIndexed was entered at all. Counted separately so that "no [DrawIntercept] output" can be
      * told apart from "the hook never fires" -- if 26.2 routes this geometry through some other
