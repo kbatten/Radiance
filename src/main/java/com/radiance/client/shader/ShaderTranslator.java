@@ -59,8 +59,19 @@ public final class ShaderTranslator {
             .orElse(0);
         uniformBufferSize = Math.ceilDiv(uniformBufferSize, 16) * 16;
 
+        String fragmentBody = fragment.source();
+        // Temporary diagnostic (env-gated): make any fragment that WOULD discard emit solid magenta
+        // instead. Buttons (gui_textured/position_tex_color) replay with valid geometry and vertex alpha
+        // 255 yet stay invisible, so their fragments must be discarding on texture alpha 0. If button-
+        // shaped magenta appears with this on, the draw rasterizes and the atlas/UV is the fault; if
+        // nothing appears, the pipeline/geometry never reaches the framebuffer. Overlay outputs are named
+        // fragColor; a shader without that name simply fails to build and falls back to GL for the run.
+        if (System.getenv("RADIANCE_DEBUG_DISCARD") != null) {
+            fragmentBody = fragmentBody.replace("discard;",
+                "{ fragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }");
+        }
         String header = buildHeader(fields);
-        return new Result(header + vertex.source(), header + fragment.source(), uniformBufferSize);
+        return new Result(header + vertex.source(), header + fragmentBody, uniformBufferSize);
     }
 
     private static StageResult rewriteStage(String source, boolean vertexStage,
