@@ -43,6 +43,14 @@ public abstract class ReloadableTextureMixins {
         if (!(texture instanceof GlTexture glTexture) || sampler == null) {
             return;
         }
+        // A cube map (the panorama, a ReloadableTexture) is tracked in the backend's separate
+        // samplerCube registry and already got its linear/clamp sampler in prepareCubeImage. It has no
+        // entry in the 2D sampler map, so routing setFilter/setClamp through the 2D path would abort on
+        // an unknown id. CubeMapTextureMixins owns the cube's sampling state.
+        if ((texture.usage() & GpuTexture.USAGE_CUBEMAP_COMPATIBLE) != 0
+            && texture.getDepthOrLayers() == 6) {
+            return;
+        }
         int id = glTexture.glId();
 
         boolean linear = sampler.getMagFilter() == FilterMode.LINEAR;
