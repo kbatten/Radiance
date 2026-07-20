@@ -78,35 +78,37 @@ public final class DrawInterceptStats {
         }
     }
 
+    private static final long vertexStartNanos = System.nanoTime();
     private static final java.util.Map<String, Integer> vertexCounts = new java.util.HashMap<>();
+    private static final java.util.Map<String, Integer> vertexLogged = new java.util.HashMap<>();
 
     /**
-     * Dump the first vertex of the first several replayed draws per pipeline: the source buffer identity
-     * and slice/vertex offsets, plus position (first three floats) and the whole stride as hex. gui and
-     * gui_text captured real positions while the first gui_textured came back all-zero, so this says
-     * whether every gui_textured draw is zero (a GeometryCapture miss for its buffer/offset) or only the
-     * first (a fullscreen sprite, look elsewhere), and whether it even shares the working pipelines'
-     * buffer. Temporary diagnostic.
+     * Time-sampled per-pipeline vertex probe. gui_textured button draws came back with vertex-colour
+     * alpha 0 (-> the shader's discard) while text faded in normally -- but the earlier probe only saw
+     * the first frames, before TitleScreen's widget fade (which only starts at half the panorama fade,
+     * ~1s, and completes ~2s) had raised widget alpha. Sample every 100th draw per pipeline, capped, with
+     * a millis timestamp and the vertex-colour alpha (last stride byte), so the alpha's trajectory over
+     * the whole run is visible: if button alpha climbs 0 -> 255 the fade works (look elsewhere); if it
+     * stays 0 the fade is stuck (fadeInStart resetting / screen re-init). Temporary diagnostic.
      */
     public static void noteVertex(String location, int bufferId, long sliceOffset, int vertexOffset,
         int firstIndex, int stride, byte[] vertexData) {
-        if (vertexCounts.merge(location, 1, Integer::sum) > 24) {
+        if (vertexCounts.merge(location, 1, Integer::sum) % 100 != 1) {
             return;
         }
-        int n = Math.min(stride, vertexData.length);
-        StringBuilder hex = new StringBuilder();
-        for (int i = 0; i < n; i++) {
-            hex.append(String.format("%02x", vertexData[i] & 0xff));
+        if (vertexLogged.merge(location, 1, Integer::sum) > 48) {
+            return;
         }
+        long ms = (System.nanoTime() - vertexStartNanos) / 1_000_000L;
+        int alpha = (stride >= 1 && vertexData.length >= stride) ? (vertexData[stride - 1] & 0xff) : -1;
         String pos = "?";
         if (vertexData.length >= 12) {
             java.nio.ByteBuffer b = java.nio.ByteBuffer.wrap(vertexData)
                 .order(java.nio.ByteOrder.LITTLE_ENDIAN);
-            pos = String.format("(%.2f,%.2f,%.2f)", b.getFloat(0), b.getFloat(4), b.getFloat(8));
+            pos = String.format("(%.1f,%.1f)", b.getFloat(0), b.getFloat(4));
         }
-        RadianceDebug.log("[Vertex0] " + location + " buf=" + Integer.toHexString(bufferId)
-            + " sOff=" + sliceOffset + " vOff=" + vertexOffset + " fIdx=" + firstIndex
-            + " stride=" + stride + " len=" + vertexData.length + " pos=" + pos + " raw=" + hex);
+        RadianceDebug.log("[VertexT] +" + ms + "ms " + location + " a=" + alpha
+            + " vOff=" + vertexOffset + " pos=" + pos);
     }
 
     /**
