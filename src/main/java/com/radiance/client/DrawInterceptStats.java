@@ -78,16 +78,19 @@ public final class DrawInterceptStats {
         }
     }
 
-    private static final java.util.Set<String> seenVertex = new java.util.HashSet<>();
+    private static final java.util.Map<String, Integer> vertexCounts = new java.util.HashMap<>();
 
     /**
-     * Dump the first vertex of a replayed draw once per pipeline: position (first three floats) plus the
-     * whole stride as hex, so the texcoord/colour attributes can be decoded by hand. Tells apart a
-     * garbage UV (samples an empty atlas region -> alpha 0 -> discard) or a zero-alpha vertex colour from
-     * a sane vertex whose texture slot is the real fault. Temporary diagnostic.
+     * Dump the first vertex of the first several replayed draws per pipeline: the source buffer identity
+     * and slice/vertex offsets, plus position (first three floats) and the whole stride as hex. gui and
+     * gui_text captured real positions while the first gui_textured came back all-zero, so this says
+     * whether every gui_textured draw is zero (a GeometryCapture miss for its buffer/offset) or only the
+     * first (a fullscreen sprite, look elsewhere), and whether it even shares the working pipelines'
+     * buffer. Temporary diagnostic.
      */
-    public static void noteVertex(String location, int stride, byte[] vertexData) {
-        if (!seenVertex.add(location)) {
+    public static void noteVertex(String location, int bufferId, long sliceOffset, int vertexOffset,
+        int firstIndex, int stride, byte[] vertexData) {
+        if (vertexCounts.merge(location, 1, Integer::sum) > 24) {
             return;
         }
         int n = Math.min(stride, vertexData.length);
@@ -101,8 +104,9 @@ public final class DrawInterceptStats {
                 .order(java.nio.ByteOrder.LITTLE_ENDIAN);
             pos = String.format("(%.2f,%.2f,%.2f)", b.getFloat(0), b.getFloat(4), b.getFloat(8));
         }
-        RadianceDebug.log("[Vertex0] " + location + " stride=" + stride + " pos=" + pos
-            + " raw=" + hex);
+        RadianceDebug.log("[Vertex0] " + location + " buf=" + Integer.toHexString(bufferId)
+            + " sOff=" + sliceOffset + " vOff=" + vertexOffset + " fIdx=" + firstIndex
+            + " stride=" + stride + " len=" + vertexData.length + " pos=" + pos + " raw=" + hex);
     }
 
     /**
