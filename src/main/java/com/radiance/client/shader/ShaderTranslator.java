@@ -26,10 +26,6 @@ public final class ShaderTranslator {
     private static final Pattern UNIFORM_BLOCK_PATTERN = Pattern.compile(
         "^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+\\w+\\s*\\{");
 
-    // Temporary: logs the discard->magenta diagnostic once so the log confirms it is active.
-    private static final java.util.concurrent.atomic.AtomicBoolean DEBUG_DISCARD_MARKER =
-        new java.util.concurrent.atomic.AtomicBoolean(false);
-
     private ShaderTranslator() {
     }
 
@@ -63,21 +59,8 @@ public final class ShaderTranslator {
             .orElse(0);
         uniformBufferSize = Math.ceilDiv(uniformBufferSize, 16) * 16;
 
-        // TEMPORARY DIAGNOSTIC (always on in this build). The magenta run proved button draws DO
-        // rasterize (options-menu buttons showed magenta backgrounds) but discard on texture alpha 0 --
-        // the bound GUI atlas is transparent at the sprite UV. Now show the RGB that would be discarded,
-        // forced opaque, to tell "atlas has RGB but lost its alpha" (buttons show their grey graphics)
-        // from "atlas is fully empty" (buttons show black) from "wrong texture" (garbage/panorama). In
-        // every GUI fragment shader the discarded value is the local `vec4 color` (color = texture*vertex
-        // colour), so `color.rgb` is in scope at the discard and reads the sampled texel's RGB.
-        String fragmentBody = fragment.source()
-            .replace("discard;", "{ fragColor = vec4(color.rgb, 1.0); return; }");
-        if (DEBUG_DISCARD_MARKER.compareAndSet(false, true)) {
-            com.radiance.client.RadianceDebug.log(
-                "[ShaderDebug] discard->show-rgb ACTIVE (temporary diagnostic build)");
-        }
         String header = buildHeader(fields);
-        return new Result(header + vertex.source(), header + fragmentBody, uniformBufferSize);
+        return new Result(header + vertex.source(), header + fragment.source(), uniformBufferSize);
     }
 
     private static StageResult rewriteStage(String source, boolean vertexStage,
