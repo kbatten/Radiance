@@ -20,6 +20,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.CloudRenderer;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.SectionOcclusionGraph;
 import net.minecraft.client.renderer.ViewArea;
 import net.minecraft.client.renderer.blockentity.AbstractEndPortalRenderer;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
@@ -70,8 +71,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * Cancelling {@code render} also skips {@code compileSections} (where MC would call
  * {@code RenderSection.compileAsync}), so this hook enqueues the frame's dirty sections (the
  * extractor's {@code sectionUpdateRenderStates}) into {@code ChunkProxy} and drains its native rebuild
- * queue. The rest of the {@code ChunkProxy} lifecycle is driven by the ViewArea /
- * SectionRenderDispatcher / RenderSection mixins.
+ * queue. It also skips {@code updateSectionOcclusion} ({@code sectionOcclusionGraph.update}) -- the
+ * camera BFS that populates the graph the extractor reads to fill {@code visibleSections} (and hence
+ * {@code sectionUpdateRenderStates}) -- so we drive that here too; without it the graph stays empty,
+ * nothing is ever dirty/enqueued, no chunk gets a BLAS and the ray-traced world is black. The rest of
+ * the {@code ChunkProxy} lifecycle is driven by the ViewArea / SectionRenderDispatcher / RenderSection
+ * mixins.
  *
  * <h3>Deferred</h3>
  * Particle / weather / crumbling capture are their own migration clusters and are left as documented
@@ -86,6 +91,9 @@ public abstract class WorldRendererMixins {
 
     @Shadow
     public abstract ViewArea viewArea();
+
+    @Shadow
+    public abstract SectionOcclusionGraph sectionOcclusionGraph();
 
     // TEMP diagnostic: terrain never builds. This hook is the only place sections are enqueued for rebuild
     // (MC's compileAsync is skipped because render is cancelled). Render thread only, so a plain counter is
@@ -249,6 +257,17 @@ public abstract class WorldRendererMixins {
                 radiance$visible, radiance$updates, radiance$enqueued);
         }
         ChunkProxy.rebuild(gameRenderer.mainCamera());
+
+        // ===================== Section occlusion graph =====================
+        // Vanilla render() ends with updateSectionOcclusion -> sectionOcclusionGraph.update(), which
+        // runs the BFS from the camera that fills the graph storage. LevelExtractor reads that storage
+        // on the NEXT frame (consumeFrustumUpdate() -> applyFrustum -> addSectionsInFrustum ->
+        // visibleSections -> the dirty subset -> sectionUpdateRenderStates, the enqueue loop above).
+        // Because we cancel render(), that BFS never ran: visibleSections stayed empty, nothing was
+        // ever dirty/enqueued, no chunk got a BLAS -> the ray-traced world was black. We reimplement
+        // compileSections above but must also drive updateSectionOcclusion here to restore the pipeline.
+        this.sectionOcclusionGraph().update(cameraState, optionsState.fov,
+            levelRenderState.chunkLoadingRenderState);
 
         ci.cancel();
     }
