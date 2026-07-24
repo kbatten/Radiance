@@ -6,6 +6,7 @@ import com.mojang.blaze3d.textures.GpuTexture;
 import com.radiance.client.proxy.vulkan.TextureProxy;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IAbstractTextureExt;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.ISpriteContentsExt;
+import com.radiance.mixin_related.extensions.vulkan_render_integration.ITextureAtlasSpriteExt;
 import java.util.List;
 import net.minecraft.client.renderer.texture.SpriteContents;
 import net.minecraft.client.renderer.texture.TextureAtlas;
@@ -60,6 +61,13 @@ public abstract class TextureAtlasMixins {
             if (mipLevels == null) {
                 continue;
             }
+            // A sprite's cell origin is (getX(), getY()), but its pixels -- and the UVs the GUI samples
+            // with -- are inset by this padding on every side: u0 = (x + padding) / atlasWidth. Uploading
+            // at the raw (x, y) lands the content padding pixels up-and-left of where it is sampled, so
+            // add the padding to the destination origin.
+            int padding = ((ITextureAtlasSpriteExt) sprite).radiance$getPadding();
+            int originX = sprite.getX() + padding;
+            int originY = sprite.getY() + padding;
             // Upload every mip the atlas actually has, so mipmapped atlases (blocks, items) are complete
             // rather than only sharp at level 0.
             int levels = Math.min(mipLevels.length, Math.max(this.mipLevelCount, 1));
@@ -78,8 +86,8 @@ public abstract class TextureAtlasMixins {
                     image.getWidth(),                    // srcRowPixels
                     atlasId,                             // dstId
                     0, 0,                                // srcOffsetX, srcOffsetY
-                    sprite.getX() >> level,              // dstOffsetX
-                    sprite.getY() >> level,              // dstOffsetY
+                    originX >> level,                    // dstOffsetX
+                    originY >> level,                    // dstOffsetY
                     width, height,
                     level);
             }
