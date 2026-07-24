@@ -266,6 +266,17 @@ public abstract class WorldRendererMixins {
         // Because we cancel render(), that BFS never ran: visibleSections stayed empty, nothing was
         // ever dirty/enqueued, no chunk got a BLAS -> the ray-traced world was black. We reimplement
         // compileSections above but must also drive updateSectionOcclusion here to restore the pipeline.
+        //
+        // smartCull=false: with smart cull ON, the BFS only propagates through a section when its
+        // SectionMesh reports facesCanSeeEachother -- but we build sections through ChunkProxy (calling
+        // SectionCompiler.compile directly), never through the SectionRenderDispatcher, so the
+        // RenderSection's SectionMesh stays UNCOMPILED (facesCanSeeEachother=false) AND the dispatcher's
+        // sectionOcclusionGraph::schedulePropagationFrom callback never fires. That dead-ends the flood
+        // at the camera's first ring (~9 sections). A ray tracer does its own visibility, so we don't
+        // want occlusion culling gating which chunks build: forcing smartCull off makes runUpdates skip
+        // the face-visibility gate and flood every loaded in-frustum section into the TLAS. Only other
+        // reader of this flag is the F3 "(s)" debug string, so mutating the extracted state is harmless.
+        cameraState.smartCull = false;
         this.sectionOcclusionGraph().update(cameraState, optionsState.fov,
             levelRenderState.chunkLoadingRenderState);
 
