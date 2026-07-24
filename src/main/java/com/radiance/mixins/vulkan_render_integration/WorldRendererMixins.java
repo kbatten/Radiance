@@ -238,8 +238,15 @@ public abstract class WorldRendererMixins {
             }
         }
         if ((radiance$sectionEnqLog++ % 200) == 0 || (radiance$updates > 0 && radiance$enqueued == 0)) {
-            com.radiance.client.RadianceClient.LOGGER.warn("[ChunkEnqueue] viewArea={} updates={} enqueued={}",
-                viewArea != null, radiance$updates, radiance$enqueued);
+            // visibleSections() is filled by SectionOcclusionGraph.addSectionsInFrustum during extract;
+            // sectionUpdateRenderStates (=updates) is those visible sections that are also dirty. If
+            // visibleSections is ~0 the occlusion graph produced nothing (sections never compile ->
+            // visibility can't propagate); if it is large but updates=0 the dirty flag is the issue.
+            int radiance$visible =
+                ((net.minecraft.client.renderer.LevelRenderer) (Object) this).visibleSections().size();
+            com.radiance.client.RadianceClient.LOGGER.warn(
+                "[ChunkEnqueue] viewArea={} visibleSections={} updates={} enqueued={}", viewArea != null,
+                radiance$visible, radiance$updates, radiance$enqueued);
         }
         ChunkProxy.rebuild(gameRenderer.mainCamera());
 
