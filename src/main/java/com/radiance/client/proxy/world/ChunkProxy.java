@@ -66,6 +66,9 @@ public class ChunkProxy {
     private static SectionRenderDispatcher currentDispatcher = null;
     private static volatile boolean initialized = false;
     private static boolean pendingRebuildAll = false;
+    // TEMP diagnostic: terrain never builds. rebuildSingle runs on worker threads, so this throttle is atomic.
+    private static final java.util.concurrent.atomic.AtomicInteger radianceRebuildBailLog =
+        new java.util.concurrent.atomic.AtomicInteger();
     private static int numChunkRebuildThreads = getChunkRebuildThreadCount();
     private static final int numImportantChunkRebuildThreads = 1;
     private static int numNormalChunkRebuildThreads = Math.max(1,
@@ -240,6 +243,10 @@ public class ChunkProxy {
             SectionCompiler sectionCompiler = currentDispatcher == null ? null
                 : ((IChunkBuilderExt) currentDispatcher).radiance$getSectionCompiler();
             if (level == null || sectionCompiler == null) {
+                if (radianceRebuildBailLog.getAndIncrement() % 200 == 0) {
+                    com.radiance.client.RadianceClient.LOGGER.info("[RebuildBail] level={} dispatcher={} sectionCompiler=null",
+                        level != null, currentDispatcher != null);
+                }
                 invalidateSingle(renderSection.index);
                 return;
             }
@@ -249,6 +256,9 @@ public class ChunkProxy {
                 new RenderRegionCache().createRegion(level, renderSection.getSectionNode());
 
             if (region == null) {
+                if (radianceRebuildBailLog.getAndIncrement() % 200 == 0) {
+                    com.radiance.client.RadianceClient.LOGGER.info("[RebuildBail] region=null (createRegion returned null)");
+                }
                 invalidateSingle(renderSection.index);
                 renderSection.sectionMesh.set(CompiledSectionMesh.UNCOMPILED);
                 return;

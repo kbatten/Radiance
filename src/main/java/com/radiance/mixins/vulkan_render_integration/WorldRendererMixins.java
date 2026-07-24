@@ -87,6 +87,12 @@ public abstract class WorldRendererMixins {
     @Shadow
     public abstract ViewArea viewArea();
 
+    // TEMP diagnostic: terrain never builds. This hook is the only place sections are enqueued for rebuild
+    // (MC's compileAsync is skipped because render is cancelled). Render thread only, so a plain counter is
+    // fine.
+    @org.spongepowered.asm.mixin.Unique
+    private static int radiance$sectionEnqLog = 0;
+
     @Inject(method = "render(Lcom/mojang/blaze3d/resource/GraphicsResourceAllocator;"
         + "Lnet/minecraft/client/DeltaTracker;Z"
         + "Lnet/minecraft/client/renderer/state/level/CameraRenderState;Lorg/joml/Matrix4fc;"
@@ -216,16 +222,24 @@ public abstract class WorldRendererMixins {
         // frame's dirty sections (the extractor's per-frame update set) into the mod's native rebuild
         // pipeline, then drain the queue (build + upload to the Vulkan backend).
         ViewArea viewArea = this.viewArea();
+        int radiance$updates = 0;
+        int radiance$enqueued = 0;
         if (viewArea != null) {
             RotatingSectionStorage<SectionRenderDispatcher.RenderSection> sections =
                 ((IViewAreaExt) viewArea).radiance$getSections();
             for (SectionUpdateRenderState sectionUpdate : levelRenderState.sectionUpdateRenderStates) {
+                radiance$updates++;
                 SectionRenderDispatcher.RenderSection section = sections.getValue(
                     sectionUpdate.sectionNode());
                 if (section != null) {
                     ChunkProxy.enqueueRebuild(section);
+                    radiance$enqueued++;
                 }
             }
+        }
+        if ((radiance$sectionEnqLog++ % 200) == 0 || (radiance$updates > 0 && radiance$enqueued == 0)) {
+            com.radiance.client.RadianceClient.LOGGER.info("[ChunkEnqueue] viewArea={} updates={} enqueued={}",
+                viewArea != null, radiance$updates, radiance$enqueued);
         }
         ChunkProxy.rebuild(gameRenderer.mainCamera());
 
