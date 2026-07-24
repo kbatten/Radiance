@@ -238,7 +238,7 @@ public abstract class WorldRendererMixins {
             }
         }
         if ((radiance$sectionEnqLog++ % 200) == 0 || (radiance$updates > 0 && radiance$enqueued == 0)) {
-            com.radiance.client.RadianceClient.LOGGER.info("[ChunkEnqueue] viewArea={} updates={} enqueued={}",
+            com.radiance.client.RadianceClient.LOGGER.warn("[ChunkEnqueue] viewArea={} updates={} enqueued={}",
                 viewArea != null, radiance$updates, radiance$enqueued);
         }
         ChunkProxy.rebuild(gameRenderer.mainCamera());

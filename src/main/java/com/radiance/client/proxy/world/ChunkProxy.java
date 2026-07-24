@@ -244,7 +244,7 @@ public class ChunkProxy {
                 : ((IChunkBuilderExt) currentDispatcher).radiance$getSectionCompiler();
             if (level == null || sectionCompiler == null) {
                 if (radianceRebuildBailLog.getAndIncrement() % 200 == 0) {
-                    com.radiance.client.RadianceClient.LOGGER.info("[RebuildBail] level={} dispatcher={} sectionCompiler=null",
+                    com.radiance.client.RadianceClient.LOGGER.warn("[RebuildBail] level={} dispatcher={} sectionCompiler=null",
                         level != null, currentDispatcher != null);
                 }
                 invalidateSingle(renderSection.index);
@@ -257,7 +257,7 @@ public class ChunkProxy {
 
             if (region == null) {
                 if (radianceRebuildBailLog.getAndIncrement() % 200 == 0) {
-                    com.radiance.client.RadianceClient.LOGGER.info("[RebuildBail] region=null (createRegion returned null)");
+                    com.radiance.client.RadianceClient.LOGGER.warn("[RebuildBail] region=null (createRegion returned null)");
                 }
                 invalidateSingle(renderSection.index);
                 renderSection.sectionMesh.set(CompiledSectionMesh.UNCOMPILED);

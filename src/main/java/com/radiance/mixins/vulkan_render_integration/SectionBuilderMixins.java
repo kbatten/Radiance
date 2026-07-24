@@ -154,7 +154,7 @@ public abstract class SectionBuilderMixins {
         results.visibilitySet = visGraph.resolve();
 
         if (radiance$compileLogCounter.getAndIncrement() % 400 == 0) {
-            com.radiance.client.RadianceClient.LOGGER.info(
+            com.radiance.client.RadianceClient.LOGGER.warn(
                 "[SectionCompile] nonAir={} consumers={} renderedLayers={}", radiance$nonAir, map.size(),
                 results.renderedLayers.size());
         }
