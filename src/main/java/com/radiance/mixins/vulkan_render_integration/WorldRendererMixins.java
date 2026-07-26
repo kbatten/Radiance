@@ -85,6 +85,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(LevelRenderer.class)
 public abstract class WorldRendererMixins {
 
+    @Unique
+    private static boolean radiance$loggedProjConv = false;
+
     @Shadow
     @Final
     private CloudRenderer cloudRenderer;
@@ -127,6 +130,20 @@ public abstract class WorldRendererMixins {
         Matrix4f viewMatrix = new Matrix4f(modelViewMatrix);
         Matrix4f effectedViewMatrix = new Matrix4f(modelViewMatrix);
         Matrix4f projectionMatrix = new Matrix4f(cameraState.projectionMatrix);
+
+        // TEMP flip diagnostic: the RT raygen assumes a Vulkan-convention projection (near plane at NDC
+        // z=0, Y pointing down => m11 < 0). MC's GL projection is Y-up (m11 > 0) with z in [-1,1]; fed
+        // unchanged that renders the world upside-down. Log the actual projection once to confirm the
+        // convention and pick the exact conversion. m11>0 => need a Y flip; m22~-1 & m32~-1 => GL z[-1,1]
+        // needing a [0,1] remap.
+        if (!radiance$loggedProjConv) {
+            radiance$loggedProjConv = true;
+            com.radiance.client.RadianceDebug.log(String.format(
+                "[CamDbg] proj m00=%.5f m11=%.5f m22=%.5f m23=%.5f m32=%.5f m33=%.5f | view m00=%.4f m11=%.4f m22=%.4f",
+                projectionMatrix.m00(), projectionMatrix.m11(), projectionMatrix.m22(),
+                projectionMatrix.m23(), projectionMatrix.m32(), projectionMatrix.m33(),
+                viewMatrix.m00(), viewMatrix.m11(), viewMatrix.m22()));
+        }
         // 26.2 TODO: RenderSystem.getTextureMatrix is gone (glint is a UBO now); identity is the
         // safe best-effort until the glint matrix is re-sourced.
         Matrix4f glintTextureMatrix = new Matrix4f();
