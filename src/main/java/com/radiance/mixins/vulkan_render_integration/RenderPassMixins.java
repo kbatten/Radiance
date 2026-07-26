@@ -9,7 +9,12 @@ import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.opengl.GlProgram;
 import com.mojang.blaze3d.opengl.GlRenderPipeline;
 import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.blaze3d.pipeline.BlendEquation;
+import com.mojang.blaze3d.pipeline.BlendFunction;
+import com.mojang.blaze3d.pipeline.ColorTargetState;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.platform.BlendFactor;
+import com.mojang.blaze3d.platform.BlendOp;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuSampler;
@@ -29,6 +34,9 @@ import java.nio.ByteBuffer;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL14;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.spongepowered.asm.mixin.Mixin;
@@ -236,6 +244,8 @@ public abstract class RenderPassMixins {
             BufferProxy.queueUpload(MemoryUtil.memAddress(indexBuf), indexId);
             BufferProxy.performQueuedUpload();
 
+            radiance$applyPipelineBlend();
+
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 ShaderProxy.UniformHandle uniform = ShaderProxy.createUniform(shader,
                     this.radiance$uniforms, this.radiance$textures, stack);
@@ -255,5 +265,61 @@ public abstract class RenderPassMixins {
             System.identityHashCode(this.radiance$vertexBuffer.buffer()),
             this.radiance$vertexBuffer.offset(), vertexOffset, firstIndex, stride, vertexData);
         ci.cancel();
+    }
+
+    // 26.2 bakes blend state into each RenderPipeline's ColorTargetState. The replay path cancels the
+    // vanilla draw before MC applies that state, so without this every replayed overlay draw kept the
+    // last-set (or default opaque ONE,ZERO) blend -- the fullscreen vignette, which needs a multiply
+    // blend, drew opaque and painted the composited world black. Push this pipeline's own blend to the
+    // native overlay dynamic state before each draw so every pipeline blends as authored.
+    @Unique
+    private void radiance$applyPipelineBlend() {
+        ColorTargetState target = this.radiance$pipeline.getColorTargetState();
+        Optional<BlendFunction> blend = target.blendFunction();
+        if (blend.isEmpty()) {
+            PipelineStateProxy.ColorBlendState.setBlendEnable(false);
+            return;
+        }
+        BlendFunction fn = blend.get();
+        BlendEquation color = fn.color();
+        BlendEquation alpha = fn.alpha();
+        PipelineStateProxy.ColorBlendState.setBlendEnable(true);
+        PipelineStateProxy.ColorBlendState.glSetBlendFuncSeparate(
+            radiance$glBlendFactor(color.sourceFactor()), radiance$glBlendFactor(alpha.sourceFactor()),
+            radiance$glBlendFactor(color.destFactor()), radiance$glBlendFactor(alpha.destFactor()));
+        PipelineStateProxy.ColorBlendState.glSetBlendOpSeparate(
+            radiance$glBlendOp(color.op()), radiance$glBlendOp(alpha.op()));
+    }
+
+    @Unique
+    private static int radiance$glBlendFactor(BlendFactor f) {
+        return switch (f) {
+            case ZERO -> GL11.GL_ZERO;
+            case ONE -> GL11.GL_ONE;
+            case SRC_COLOR -> GL11.GL_SRC_COLOR;
+            case ONE_MINUS_SRC_COLOR -> GL11.GL_ONE_MINUS_SRC_COLOR;
+            case DST_COLOR -> GL11.GL_DST_COLOR;
+            case ONE_MINUS_DST_COLOR -> GL11.GL_ONE_MINUS_DST_COLOR;
+            case SRC_ALPHA -> GL11.GL_SRC_ALPHA;
+            case ONE_MINUS_SRC_ALPHA -> GL11.GL_ONE_MINUS_SRC_ALPHA;
+            case DST_ALPHA -> GL11.GL_DST_ALPHA;
+            case ONE_MINUS_DST_ALPHA -> GL11.GL_ONE_MINUS_DST_ALPHA;
+            case CONSTANT_COLOR -> GL14.GL_CONSTANT_COLOR;
+            case ONE_MINUS_CONSTANT_COLOR -> GL14.GL_ONE_MINUS_CONSTANT_COLOR;
+            case CONSTANT_ALPHA -> GL14.GL_CONSTANT_ALPHA;
+            case ONE_MINUS_CONSTANT_ALPHA -> GL14.GL_ONE_MINUS_CONSTANT_ALPHA;
+            case SRC_ALPHA_SATURATE -> GL11.GL_SRC_ALPHA_SATURATE;
+        };
+    }
+
+    @Unique
+    private static int radiance$glBlendOp(BlendOp op) {
+        return switch (op) {
+            case ADD -> GL14.GL_FUNC_ADD;
+            case SUBTRACT -> GL14.GL_FUNC_SUBTRACT;
+            case REVERSE_SUBTRACT -> GL14.GL_FUNC_REVERSE_SUBTRACT;
+            case MIN -> GL14.GL_MIN;
+            case MAX -> GL14.GL_MAX;
+        };
     }
 }
