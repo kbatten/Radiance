@@ -154,9 +154,13 @@ public abstract class SectionBuilderMixins {
         results.visibilitySet = visGraph.resolve();
 
         if (radiance$compileLogCounter.getAndIncrement() % 400 == 0) {
+            // atlasGlId is written into each vertex's textureID only if != 0 (PBRVertexConsumer.beginVertex).
+            // If this logs 0, the block atlas has no resolved glId at compile time -> every terrain vertex
+            // gets textureID=0 -> the RT samples empty texture 0 -> black terrain. Reliable (Java, no shader
+            // deploy dependency) unlike the RADIANCE_DEBUG_* shader probes.
             com.radiance.client.RadianceClient.LOGGER.warn(
-                "[SectionCompile] nonAir={} consumers={} renderedLayers={}", radiance$nonAir, map.size(),
-                results.renderedLayers.size());
+                "[SectionCompile] nonAir={} consumers={} renderedLayers={} atlasGlId={}", radiance$nonAir,
+                map.size(), results.renderedLayers.size(), atlasGlId);
         }
 
         cir.setReturnValue(results);
