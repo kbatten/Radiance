@@ -85,6 +85,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(LevelRenderer.class)
 public abstract class WorldRendererMixins {
 
+    @Unique
+    private static int radiance$skyDbgCounter = 0;
+
     @Shadow
     @Final
     private CloudRenderer cloudRenderer;
@@ -192,6 +195,17 @@ public abstract class WorldRendererMixins {
             ARGB.blueFloat(horizonColor), ARGB.alphaFloat(horizonColor), sunDirection, skyType,
             sunRisingOrSetting, skyDark, hasBlindnessOrDarkness, submersionType, moonPhase,
             rainGradient, sunTextureID, moonTextureID);
+
+        // Black-terrain / no-direct-light diagnostic: the vanilla-pt raygen zeroes direct light with
+        // (1.0 - skyUBO.rainGradient), and blindness/darkness also kill sky light. If rainGradient=1 or
+        // blindness=true (a wrong 26.2 mapping) surfaces get no light -> black world while the sky still
+        // renders. Log the lighting inputs (jar-only, reliable). Throttled.
+        if (radiance$skyDbgCounter++ % 100 == 0) {
+            com.radiance.client.RadianceClient.LOGGER.warn(
+                "[SkyDbg] rainGradient={} blindness={} skyDark={} sunAngle={} sunDir=({},{},{}) skyType={}",
+                rainGradient, hasBlindnessOrDarkness, skyDark, sunAngle, sunDirection.x, sunDirection.y,
+                sunDirection.z, skyType);
+        }
 
         BufferProxy.updateMapping();
 
