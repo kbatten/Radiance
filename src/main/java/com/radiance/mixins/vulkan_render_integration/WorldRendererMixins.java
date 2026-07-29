@@ -170,7 +170,16 @@ public abstract class WorldRendererMixins {
         // ===================== Sky uniform =====================
         int baseColor = skyRenderState.skyColor;
         int horizonColor = skyRenderState.sunriseAndSunsetColor;
-        float sunAngle = skyRenderState.sunAngle;
+        // skyRenderState.sunAngle reads 0 every frame -- MC assigns it during the sky render pass that this
+        // mixin cancels, so it's left at its reset() default, freezing the sun at the zenith (0,1,0) and
+        // leaving every surface unlit while the sky still renders. 26.2 removed Level.getTimeOfDay/getSunAngle
+        // (now WorldClock/Timeline), so compute the day-angle from the level time ourselves with MC's classic
+        // sky-angle formula, so the sun tracks the day/night cycle.
+        long radiance$dayTime = levelRenderState.gameTime % 24000L;
+        double radiance$dayFrac = (double) radiance$dayTime / 24000.0 - 0.25;
+        radiance$dayFrac -= Math.floor(radiance$dayFrac);
+        double radiance$cosAdj = 0.5 - Math.cos(radiance$dayFrac * Math.PI) / 2.0;
+        float sunAngle = (float) ((radiance$dayFrac * 2.0 + radiance$cosAdj) / 3.0);
 
         Matrix4f sunRotation = new Matrix4f();
         sunRotation.rotate(Axis.YP.rotationDegrees(-90.0F));
