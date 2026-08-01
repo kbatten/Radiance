@@ -73,13 +73,6 @@ public abstract class SectionBuilderMixins {
     abstract <E extends BlockEntity> void handleBlockEntity(SectionCompiler.Results results,
         E blockEntity);
 
-    // TEMP diagnostic: terrain renders black because every section compiles to empty renderedLayers
-    // (-> invalidateSingle -> no BLAS). compile runs on multiple rebuild worker threads, so the throttle
-    // counter is atomic. Splits region-all-air vs no-quads-emitted vs null-mesh.
-    @Unique
-    private static final java.util.concurrent.atomic.AtomicInteger radiance$compileLogCounter =
-        new java.util.concurrent.atomic.AtomicInteger();
-
     @Inject(method = "compile", at = @At("HEAD"), cancellable = true)
     public void redirectCompile(SectionPos sectionPos, RenderSectionRegion region,
         VertexSorting vertexSorting, SectionBufferBuilderPack builders,
@@ -104,13 +97,11 @@ public abstract class SectionBuilderMixins {
         FluidRenderer.Output fluidOutput = layer -> beginBufferBuilding(map, builders, layer,
             atlasGlId);
 
-        int radiance$nonAir = 0;
         for (BlockPos pos : BlockPos.betweenClosed(minPos, maxPos)) {
             BlockState blockState = region.getBlockState(pos);
             if (blockState.isAir()) {
                 continue;
             }
-            radiance$nonAir++;
 
             if (blockState.isSolidRender()) {
                 visGraph.setOpaque(pos);
@@ -152,16 +143,6 @@ public abstract class SectionBuilderMixins {
 
         BlockModelLighter.clearCache();
         results.visibilitySet = visGraph.resolve();
-
-        if (radiance$compileLogCounter.getAndIncrement() % 400 == 0) {
-            // atlasGlId is written into each vertex's textureID only if != 0 (PBRVertexConsumer.beginVertex).
-            // If this logs 0, the block atlas has no resolved glId at compile time -> every terrain vertex
-            // gets textureID=0 -> the RT samples empty texture 0 -> black terrain. Reliable (Java, no shader
-            // deploy dependency) unlike the RADIANCE_DEBUG_* shader probes.
-            com.radiance.client.RadianceClient.LOGGER.warn(
-                "[SectionCompile] nonAir={} consumers={} renderedLayers={} atlasGlId={}", radiance$nonAir,
-                map.size(), results.renderedLayers.size(), atlasGlId);
-        }
 
         cir.setReturnValue(results);
     }

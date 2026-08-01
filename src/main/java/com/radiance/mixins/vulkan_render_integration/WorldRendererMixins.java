@@ -85,9 +85,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(LevelRenderer.class)
 public abstract class WorldRendererMixins {
 
-    @Unique
-    private static int radiance$skyDbgCounter = 0;
-
     @Shadow
     @Final
     private CloudRenderer cloudRenderer;
@@ -97,12 +94,6 @@ public abstract class WorldRendererMixins {
 
     @Shadow
     public abstract SectionOcclusionGraph sectionOcclusionGraph();
-
-    // TEMP diagnostic: terrain never builds. This hook is the only place sections are enqueued for rebuild
-    // (MC's compileAsync is skipped because render is cancelled). Render thread only, so a plain counter is
-    // fine.
-    @org.spongepowered.asm.mixin.Unique
-    private static int radiance$sectionEnqLog = 0;
 
     @Inject(method = "render(Lcom/mojang/blaze3d/resource/GraphicsResourceAllocator;"
         + "Lnet/minecraft/client/DeltaTracker;Z"
@@ -211,17 +202,6 @@ public abstract class WorldRendererMixins {
             sunRisingOrSetting, skyDark, hasBlindnessOrDarkness, submersionType, moonPhase,
             rainGradient, sunTextureID, moonTextureID);
 
-        // Black-terrain / no-direct-light diagnostic: the vanilla-pt raygen zeroes direct light with
-        // (1.0 - skyUBO.rainGradient), and blindness/darkness also kill sky light. If rainGradient=1 or
-        // blindness=true (a wrong 26.2 mapping) surfaces get no light -> black world while the sky still
-        // renders. Log the lighting inputs (jar-only, reliable). Throttled.
-        if (radiance$skyDbgCounter++ % 100 == 0) {
-            com.radiance.client.RadianceClient.LOGGER.warn(
-                "[SkyDbg] rainGradient={} blindness={} skyDark={} sunAngle={} sunDir=({},{},{}) skyType={}",
-                rainGradient, hasBlindnessOrDarkness, skyDark, sunAngle, sunDirection.x, sunDirection.y,
-                sunDirection.z, skyType);
-        }
-
         BufferProxy.updateMapping();
 
         // ===================== Entities (raw -> stable identity) =====================
@@ -271,31 +251,16 @@ public abstract class WorldRendererMixins {
         // frame's dirty sections (the extractor's per-frame update set) into the mod's native rebuild
         // pipeline, then drain the queue (build + upload to the Vulkan backend).
         ViewArea viewArea = this.viewArea();
-        int radiance$updates = 0;
-        int radiance$enqueued = 0;
         if (viewArea != null) {
             RotatingSectionStorage<SectionRenderDispatcher.RenderSection> sections =
                 ((IViewAreaExt) viewArea).radiance$getSections();
             for (SectionUpdateRenderState sectionUpdate : levelRenderState.sectionUpdateRenderStates) {
-                radiance$updates++;
                 SectionRenderDispatcher.RenderSection section = sections.getValue(
                     sectionUpdate.sectionNode());
                 if (section != null) {
                     ChunkProxy.enqueueRebuild(section);
-                    radiance$enqueued++;
                 }
             }
-        }
-        if ((radiance$sectionEnqLog++ % 200) == 0 || (radiance$updates > 0 && radiance$enqueued == 0)) {
-            // visibleSections() is filled by SectionOcclusionGraph.addSectionsInFrustum during extract;
-            // sectionUpdateRenderStates (=updates) is those visible sections that are also dirty. If
-            // visibleSections is ~0 the occlusion graph produced nothing (sections never compile ->
-            // visibility can't propagate); if it is large but updates=0 the dirty flag is the issue.
-            int radiance$visible =
-                ((net.minecraft.client.renderer.LevelRenderer) (Object) this).visibleSections().size();
-            com.radiance.client.RadianceClient.LOGGER.warn(
-                "[ChunkEnqueue] viewArea={} visibleSections={} updates={} enqueued={}", viewArea != null,
-                radiance$visible, radiance$updates, radiance$enqueued);
         }
         ChunkProxy.rebuild(gameRenderer.mainCamera());
 
