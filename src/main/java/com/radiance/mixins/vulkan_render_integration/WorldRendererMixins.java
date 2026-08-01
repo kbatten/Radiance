@@ -152,7 +152,13 @@ public abstract class WorldRendererMixins {
         boolean firstPerson = client.options.getCameraType().isFirstPerson();
 
         FogData fogData = cameraState.fogData;
-        int skyType = skyRenderState.skybox.ordinal();
+        // skyRenderState.skybox reads NONE(0) every frame -- like sunAngle above, MC assigns it during the sky
+        // render pass this mod cancels, so it never leaves its default. The RT sky miss shader treats skyType 0
+        // as "void" and returns BLACK (no atmosphere), so the overworld sky was black while terrain stayed lit.
+        // Read the skybox straight from the dimension (NONE=0, OVERWORLD=1, END=2 -- matches the shader) so the
+        // overworld gets skyType 1 and the atmosphere renders.
+        int skyType = client.level != null ? client.level.dimensionType().skybox().ordinal()
+                                           : skyRenderState.skybox.ordinal();
         int endSkyTextureID = radiance$resolveGlId(
             textureManager.getTexture(AbstractEndPortalRenderer.END_SKY_LOCATION).getTextureView());
         int endPortalTextureID = radiance$resolveGlId(
