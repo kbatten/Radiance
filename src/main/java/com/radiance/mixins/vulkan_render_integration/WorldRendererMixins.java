@@ -33,6 +33,7 @@ import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.SectionUpdateRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.client.renderer.texture.TextureManager;
+import net.minecraft.core.SectionPos;
 import net.minecraft.util.ARGB;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
@@ -252,6 +253,21 @@ public abstract class WorldRendererMixins {
         // pipeline, then drain the queue (build + upload to the Vulkan backend).
         ViewArea viewArea = this.viewArea();
         if (viewArea != null) {
+            // Follow the camera. 26.2 moved the per-frame ViewArea grid rotation into
+            // LevelRenderer.repositionCamera, which is called ONLY from LevelRenderer.render (near its
+            // head) -- the method this mixin cancels at HEAD. Without replicating it the
+            // RotatingSectionStorage stays frozen where invalidateCompiledGeometry last centered it
+            // (world load / F3+A / settings change), so once the player walks past that radius
+            // sections.getValue(node) returns null for their surroundings, nothing enqueues or builds,
+            // and the ray-traced terrain goes invisible "after walking a certain distance". Replicating
+            // the ViewArea.repositionCamera call rotates the grid to follow the player, firing the mod's
+            // relocateSingle / updateSectionPos hooks (native chunk grid stays in sync) and letting the
+            // occlusion graph below see the moved grid. The worldborder invalidate + translucency-sort
+            // camera set that LevelRenderer.repositionCamera also does aren't needed here (no MC terrain
+            // pass runs; translucency is sorted in the native backend). The call internally no-ops until
+            // the camera crosses a section boundary, so it is cheap to invoke every frame.
+            viewArea.repositionCamera(SectionPos.of(cameraState.pos));
+
             RotatingSectionStorage<SectionRenderDispatcher.RenderSection> sections =
                 ((IViewAreaExt) viewArea).radiance$getSections();
             for (SectionUpdateRenderState sectionUpdate : levelRenderState.sectionUpdateRenderStates) {
