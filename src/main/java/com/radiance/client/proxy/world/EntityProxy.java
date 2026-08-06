@@ -824,19 +824,33 @@ public class EntityProxy {
     }
 
     /**
-     * 26.2: RenderPhase is gone, so resolve the layer's GL texture id from {@link PreparedRenderType}
-     * (first GL-backed sampler), mirroring {@code StorageVertexConsumerProvider}. Runtime-validate
-     * that {@code prepare()} is safe off-frame (it reads RenderSystem state).
+     * 26.2: RenderPhase is gone, so resolve the layer's GL texture id from {@link PreparedRenderType},
+     * mirroring {@code StorageVertexConsumerProvider}. Select the main color sampler ({@code Sampler0})
+     * by NAME -- NOT "first GL-backed": {@code RenderSetup.prepareTextures} appends the overlay
+     * ({@code Sampler1}) and lightmap ({@code Sampler2}) BEFORE the texture-map entries, so the list is
+     * ordered [overlay, lightmap, Sampler0]. "First GL-backed" therefore returned the overlay texture
+     * -- literally red (hurt, top half) / white (bottom half) -- so ray-traced mobs sampled it as
+     * albedo and rendered red and white. Prefer {@code Sampler0}; fall back to the first GL-backed
+     * sampler that is not the overlay/lightmap. Runtime-validate that {@code prepare()} is safe
+     * off-frame (it reads RenderSystem state).
      */
     private static int resolveTextureGlId(RenderType renderType) {
         PreparedRenderType prepared = renderType.prepare();
+        int fallback = 0;
         for (PreparedRenderType.Texture texture : prepared.textures()) {
-            if (texture.textureView() != null
-                && texture.textureView().texture() instanceof GlTexture glTexture) {
+            if (texture.textureView() == null
+                || !(texture.textureView().texture() instanceof GlTexture glTexture)) {
+                continue;
+            }
+            if ("Sampler0".equals(texture.name())) {
                 return glTexture.glId();
             }
+            if (fallback == 0 && !"Sampler1".equals(texture.name())
+                && !"Sampler2".equals(texture.name())) {
+                fallback = glTexture.glId();
+            }
         }
-        return 0;
+        return fallback;
     }
 
     private static native void queueBuild(float lineWidth,

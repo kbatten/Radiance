@@ -84,19 +84,33 @@ public class StorageVertexConsumerProvider {
     }
 
     /**
-     * 26.2: the layer's texture lives in {@link PreparedRenderType}'s bound textures; take the first
-     * GL-backed sampler's {@code glId} (the same {@link GlTexture} path {@code RenderPassMixins}
-     * uses). {@code prepare()} builds the prepared type; runtime-validate that calling it during
-     * capture (outside a render pass) is acceptable.
+     * 26.2: the layer's texture lives in {@link PreparedRenderType}'s bound textures. Select the main
+     * color sampler ({@code Sampler0}) by NAME -- NOT "first GL-backed". {@code
+     * RenderSetup.prepareTextures} appends the overlay ({@code Sampler1}) and lightmap ({@code
+     * Sampler2}) BEFORE the texture-map entries, so the list is ordered [overlay, lightmap, Sampler0].
+     * "First GL-backed" therefore returned the overlay texture -- which is literally red (hurt, top
+     * half) / white (bottom half) -- so ray-traced entities sampled it as albedo and rendered red and
+     * white. Prefer {@code Sampler0}; fall back to the first GL-backed sampler that is not the
+     * overlay/lightmap for render types whose primary texture uses a different name.
+     * {@code prepare()} builds the prepared type; runtime-validate that calling it during capture
+     * (outside a render pass) is acceptable.
      */
     static int resolveTextureId(RenderType renderType) {
         PreparedRenderType prepared = renderType.prepare();
+        int fallback = 0;
         for (PreparedRenderType.Texture texture : prepared.textures()) {
-            if (texture.textureView() != null
-                && texture.textureView().texture() instanceof GlTexture glTexture) {
+            if (texture.textureView() == null
+                || !(texture.textureView().texture() instanceof GlTexture glTexture)) {
+                continue;
+            }
+            if ("Sampler0".equals(texture.name())) {
                 return glTexture.glId();
             }
+            if (fallback == 0 && !"Sampler1".equals(texture.name())
+                && !"Sampler2".equals(texture.name())) {
+                fallback = glTexture.glId();
+            }
         }
-        return 0;
+        return fallback;
     }
 }
