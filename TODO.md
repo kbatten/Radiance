@@ -24,6 +24,7 @@ how each feature worked in 1.21.x.
 | 12 | **Item glint** | ⚠️ | `WorldRendererMixins:137` | Glint texture matrix hardcoded to identity (`RenderSystem.getTextureMatrix` gone; it's a UBO now). Cosmetic. |
 | 13 | **Screenshot / world-icon capture** | ❌ | `GameRendererMixins:43` | `renderLevel` capture is a TODO. |
 | 14 | **World shader translation** (terrain/clouds/end_portal) | ⚠️ | shader translator | 4 world shaders fail translation (new 26.2 ChunkSection block fields absent from BuiltinUniforms). **Low priority** — world is RT'd from captured meshes, not these draws. |
+| 15 | **First-person held item is a flat square** | ⚠️ | first-person item capture (`EntityProxy` hand path) | RT'd held item renders as a textured square, not its actual item-model shape. Texture is correct (post mobs-red fix), geometry is wrong. **Low priority** (user-deprioritised 2026-08-06). Likely the item-model geometry captured for the hand is a bounding quad rather than the built model, or the flat 'generated' model's shape/alpha isn't honoured. Distinct from the GUI item-atlas path (#3). |
 
 ## Stability (slot in whenever it annoys)
 
