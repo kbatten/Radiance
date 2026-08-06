@@ -6,8 +6,10 @@ import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.radiance.client.proxy.vulkan.GeometryCapture;
+import com.radiance.client.proxy.vulkan.RenderTargets;
 import com.radiance.client.proxy.vulkan.TextureProxy;
 import java.nio.ByteBuffer;
+import org.joml.Vector4fc;
 import org.lwjgl.system.MemoryUtil;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -174,6 +176,43 @@ public abstract class CommandEncoderMixins {
         } finally {
             MemoryUtil.memFree(src); // queueUpload copies synchronously, so this is safe to free now
         }
+    }
+
+    // Capture the per-slot region clear an off-screen render target issues just before its render
+    // pass (GuiItemAtlas clears each item slot to transparent before rendering the item model into it).
+    // The mod otherwise leaves this on the vanilla GL path -- harmless, since the mod renders into and
+    // samples the *native* image, not MC's GL texture -- but the native RTT pass LOADs its color to
+    // preserve already-cached slots, so it must replay this clear as a scissored clear on the slot.
+    // Stored per color-target GL id and consumed at the next RTT render-pass begin (ShaderProxy.beginTarget).
+    @Inject(
+        method = "clearColorAndDepthTextures(Lcom/mojang/blaze3d/textures/GpuTexture;"
+            + "Lorg/joml/Vector4fc;Lcom/mojang/blaze3d/textures/GpuTexture;DIIII)V",
+        at = @At("HEAD"))
+    private void radiance$captureRenderTargetRegionClear(GpuTexture colorTexture, Vector4fc clearColor,
+        GpuTexture depthTexture, double clearDepth, int x, int y, int width, int height,
+        CallbackInfo ci) {
+        radiance$captureRenderTargetClear(colorTexture, clearColor, clearDepth, x, y, width, height);
+    }
+
+    @Inject(
+        method = "clearColorAndDepthTextures(Lcom/mojang/blaze3d/textures/GpuTexture;"
+            + "Lorg/joml/Vector4fc;Lcom/mojang/blaze3d/textures/GpuTexture;D)V",
+        at = @At("HEAD"))
+    private void radiance$captureRenderTargetWholeClear(GpuTexture colorTexture, Vector4fc clearColor,
+        GpuTexture depthTexture, double clearDepth, CallbackInfo ci) {
+        radiance$captureRenderTargetClear(colorTexture, clearColor, clearDepth, 0, 0,
+            colorTexture.getWidth(0), colorTexture.getHeight(0));
+    }
+
+    private static void radiance$captureRenderTargetClear(GpuTexture colorTexture, Vector4fc clearColor,
+        double clearDepth, int x, int y, int width, int height) {
+        if (!(colorTexture instanceof GlTexture glTexture)
+            || !RenderTargets.isColorTarget(glTexture.glId())) {
+            return;
+        }
+        RenderTargets.setPendingClear(glTexture.glId(),
+            new RenderTargets.PendingClear(x, y, width, height, clearColor.x(), clearColor.y(),
+                clearColor.z(), clearColor.w(), clearDepth));
     }
 
     // A cube-map GpuTexture (the panorama) has six cube-compatible layers and is registered in the

@@ -24,6 +24,12 @@ public class TextureProxy {
     public synchronized static native void prepareImage(int id, int mipLevels, int width,
         int height, int format);
 
+    // Render-target color textures (e.g. GuiItemAtlas) need the backend image created with
+    // COLOR_ATTACHMENT usage (in addition to SAMPLED) so the draw-replay path can render INTO them,
+    // while the GUI still samples them by GL id like any 2D texture. Single mip, no mipmap sampler.
+    public synchronized static native void prepareRenderTargetImage(int id, int width, int height,
+        int format);
+
     // Cube textures (the panorama) are imported and uploaded separately from 2D textures: they need a
     // 6-layer cube image and a samplerCube bindless slot, neither of which the 2D path provides.
     public synchronized static native void prepareCubeImage(int id, int maxLevel, int faceWidth,
@@ -146,5 +152,18 @@ public class TextureProxy {
         if (vkFormat != null) {
             prepareCubeImage(id, mipLevels, faceWidth, faceHeight, vkFormat.getValue());
         }
+    }
+
+    // Import a render-target COLOR texture (color-attachment + sampled). The depth attachment of a
+    // render target is not imported: it is a depth format the 2D backend does not sample, and the
+    // RTT path allocates its own matching depth image natively. Registers the GL id so the draw path
+    // can recognise it as an off-screen render target.
+    public static void prepareRenderTargetImage(GpuFormat format, int id, int width, int height) {
+        VulkanConstants.VkFormat vkFormat = VulkanConstants.VkFormat.fromGpuFormat(format);
+        if (vkFormat == null) {
+            return; // depth (or otherwise-untracked) format -- backend handles depth itself
+        }
+        prepareRenderTargetImage(id, width, height, vkFormat.getValue());
+        RenderTargets.registerColorTarget(id);
     }
 }

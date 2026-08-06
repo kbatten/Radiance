@@ -32,6 +32,23 @@ public final class ShaderProxy {
     public static native void draw(int vertexId, int indexId, int shaderId, int indexCount,
         int indexType, long uniformPtr, int uniformSize);
 
+    // Render-target-aware draw path (fix for corrupted GUI item icons -- GuiItemAtlas RTT). Instead of
+    // recording into the single native overlay, these route the draw into a native render pass that
+    // targets the registered color texture `colorGlId` (see {@link RenderTargets}), then leave it in a
+    // sampleable layout so the later atlas-quad blit reads real pixels.
+    //
+    // beginTarget begins that pass (color+depth LOAD to preserve already-cached slots) and replays the
+    // per-slot region clear as a scissored clear; the same rect is used as the draw scissor. drawToTarget
+    // is identical to draw but records into the active RTT pass. endTarget ends it and transitions the
+    // color image to shader-read. All three record on the same overlay command buffer, in MC call order.
+    public static native void beginTarget(int colorGlId, int clearX, int clearY, int clearWidth,
+        int clearHeight, float clearR, float clearG, float clearB, float clearA, double clearDepth);
+
+    public static native void drawToTarget(int vertexId, int indexId, int shaderId, int indexCount,
+        int indexType, long uniformPtr, int uniformSize);
+
+    public static native void endTarget();
+
     public static void draw(BufferProxy.VertexIndexBufferHandle handle, int shaderId, int indexCount,
         int indexType, long uniformPtr, int uniformSize) {
         draw(handle.vertexId, handle.indexId, shaderId, indexCount, indexType, uniformPtr,

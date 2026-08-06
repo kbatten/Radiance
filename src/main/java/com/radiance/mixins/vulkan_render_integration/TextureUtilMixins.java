@@ -41,7 +41,7 @@ public abstract class TextureUtilMixins {
         if (radiance$isCubeTexture(usage, depthOrLayers)) {
             return;
         }
-        radiance$importToVulkan(cir.getReturnValue(), format, width, height, mipLevels);
+        radiance$importToVulkan(cir.getReturnValue(), usage, format, width, height, mipLevels);
     }
 
     @Inject(
@@ -53,7 +53,7 @@ public abstract class TextureUtilMixins {
         if (radiance$isCubeTexture(usage, depthOrLayers)) {
             return;
         }
-        radiance$importToVulkan(cir.getReturnValue(), format, width, height, mipLevels);
+        radiance$importToVulkan(cir.getReturnValue(), usage, format, width, height, mipLevels);
     }
 
     // A cube texture (6 cube-compatible layers) must not be imported as a 2D image here -- that would
@@ -63,12 +63,22 @@ public abstract class TextureUtilMixins {
         return (usage & GpuTexture.USAGE_CUBEMAP_COMPATIBLE) != 0 && depthOrLayers == 6;
     }
 
-    private static void radiance$importToVulkan(GpuTexture gpuTexture, GpuFormat format,
+    private static void radiance$importToVulkan(GpuTexture gpuTexture, int usage, GpuFormat format,
         int width, int height, int mipLevels) {
-        if (gpuTexture instanceof GlTexture glTexture) {
-            // Import the GL texture's storage into the Vulkan backend under its GL id.
-            // prepareImage ignores formats the backend does not track.
-            TextureProxy.prepareImage(format, glTexture.glId(), mipLevels, width, height);
+        if (!(gpuTexture instanceof GlTexture glTexture)) {
+            return;
         }
+        if ((usage & GpuTexture.USAGE_RENDER_ATTACHMENT) != 0) {
+            // Off-screen render target (e.g. GuiItemAtlas): the backend must be able to render INTO
+            // it, not just sample it, so import the color attachment as color-attachment + sampled.
+            // A depth-format attachment falls through prepareRenderTargetImage (the backend allocates
+            // its own matching RTT depth image). Render targets are always single-mip.
+            TextureProxy.prepareRenderTargetImage(format, glTexture.glId(), width, height);
+            return;
+        }
+        // Import the GL texture's storage into the Vulkan backend under its GL id.
+        // prepareImage ignores formats the backend does not track.
+        TextureProxy.prepareImage(format, glTexture.glId(), mipLevels, width, height);
     }
 }
+

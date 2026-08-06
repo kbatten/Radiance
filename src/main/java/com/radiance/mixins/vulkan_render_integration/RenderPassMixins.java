@@ -12,19 +12,25 @@ import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.pipeline.BlendEquation;
 import com.mojang.blaze3d.pipeline.BlendFunction;
 import com.mojang.blaze3d.pipeline.ColorTargetState;
+import com.mojang.blaze3d.pipeline.DepthStencilState;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.BlendFactor;
 import com.mojang.blaze3d.platform.BlendOp;
+import com.mojang.blaze3d.platform.CompareOp;
 import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.radiance.client.DrawInterceptStats;
 import com.radiance.client.constant.Constants;
+import com.radiance.client.constant.VulkanConstants;
 import com.radiance.client.proxy.vulkan.BufferProxy;
 import com.radiance.client.proxy.vulkan.GeometryCapture;
 import com.radiance.client.proxy.vulkan.PipelineStateProxy;
+import com.radiance.client.proxy.vulkan.RenderTargets;
 import com.radiance.client.proxy.vulkan.ShaderProxy;
 import com.radiance.client.shader.ShaderDefinition;
 import com.radiance.client.shader.ShaderRegistry;
@@ -33,13 +39,18 @@ import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import java.nio.ByteBuffer;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import net.minecraft.client.Minecraft;
+import org.joml.Vector4fc;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -73,6 +84,18 @@ public abstract class RenderPassMixins {
     private GpuBuffer radiance$indexBuffer;
     @Unique
     private IndexType radiance$indexType;
+
+    // The pass's color attachments (carried by the front-end RenderPass) let the draw path tell an
+    // off-screen render target (e.g. GuiItemAtlas) from the main framebuffer. Shadowed to read the
+    // target texture without re-plumbing every draw entry point.
+    @Shadow
+    @Final
+    private List<RenderPassDescriptor.Attachment<Optional<Vector4fc>>> colorAttachments;
+
+    // True once this pass has begun a native RTT render pass (so close() knows to end it, and draws
+    // after the first skip the begin/clear).
+    @Unique
+    private boolean radiance$rtBegun;
 
     @Inject(method = "setPipeline", at = @At("HEAD"))
     private void radiance$onSetPipeline(RenderPipeline pipeline, CallbackInfo ci) {
@@ -246,12 +269,37 @@ public abstract class RenderPassMixins {
 
             radiance$applyPipelineBlend();
 
+            // Route to an off-screen render target (GuiItemAtlas item-model render) when this pass
+            // targets one; otherwise the existing overlay path. The overlay path is left byte-for-byte
+            // unchanged (no depth/cull touched) so flat GUI cannot regress; the RTT path applies the
+            // pipeline's depth (26.2 reverse-Z GEQUAL) + cull so item models self-occlude, and resets
+            // that state at pass close so following overlay draws are unaffected.
+            int rtColorId = radiance$resolveRenderTarget();
+
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 ShaderProxy.UniformHandle uniform = ShaderProxy.createUniform(shader,
                     this.radiance$uniforms, this.radiance$textures, stack);
-                ShaderProxy.draw(vertexId, indexId, shader.nativeId(), indexCount,
-                    Constants.IndexTypes.getValue(this.radiance$indexType), uniform.addr(),
-                    uniform.size());
+                int indexTypeValue = Constants.IndexTypes.getValue(this.radiance$indexType);
+                if (rtColorId >= 0) {
+                    radiance$applyPipelineDepthAndCull();
+                    if (!this.radiance$rtBegun) {
+                        RenderTargets.PendingClear clear = RenderTargets.takePendingClear(rtColorId);
+                        if (clear != null) {
+                            ShaderProxy.beginTarget(rtColorId, clear.x(), clear.y(), clear.width(),
+                                clear.height(), clear.r(), clear.g(), clear.b(), clear.a(),
+                                clear.depth());
+                        } else {
+                            // No captured clear (defensive): begin without a slot clear (width 0).
+                            ShaderProxy.beginTarget(rtColorId, 0, 0, 0, 0, 0f, 0f, 0f, 0f, 0.0);
+                        }
+                        this.radiance$rtBegun = true;
+                    }
+                    ShaderProxy.drawToTarget(vertexId, indexId, shader.nativeId(), indexCount,
+                        indexTypeValue, uniform.addr(), uniform.size());
+                } else {
+                    ShaderProxy.draw(vertexId, indexId, shader.nativeId(), indexCount, indexTypeValue,
+                        uniform.addr(), uniform.size());
+                }
             }
         } finally {
             MemoryUtil.memFree(vertexBuf);
@@ -265,6 +313,86 @@ public abstract class RenderPassMixins {
             System.identityHashCode(this.radiance$vertexBuffer.buffer()),
             this.radiance$vertexBuffer.offset(), vertexOffset, firstIndex, stride, vertexData);
         ci.cancel();
+    }
+
+    // End the native RTT render pass when the front-end RenderPass closes, and reset the depth/cull
+    // dynamic state the RTT draws set so subsequent overlay draws (flat GUI) run with the overlay's
+    // implicit state (depth test off, no cull) exactly as before this change.
+    @Inject(method = "close", at = @At("HEAD"))
+    private void radiance$onClose(CallbackInfo ci) {
+        if (this.radiance$rtBegun) {
+            ShaderProxy.endTarget();
+            radiance$resetDepthAndCull();
+            this.radiance$rtBegun = false;
+        }
+    }
+
+    // Return the color-attachment GL id if this pass targets an off-screen render target we route to
+    // RTT, else -1. A pass targets RTT when its color attachment is a registered render-target texture
+    // (created with USAGE_RENDER_ATTACHMENT) that is NOT the main framebuffer -- the main GUI target,
+    // which must keep going to the overlay.
+    @Unique
+    private int radiance$resolveRenderTarget() {
+        if (this.colorAttachments == null || this.colorAttachments.isEmpty()) {
+            return -1;
+        }
+        GpuTextureView view = this.colorAttachments.get(0).textureView();
+        if (view == null || !(view.texture() instanceof GlTexture glTexture)) {
+            return -1;
+        }
+        int glId = glTexture.glId();
+        if (!RenderTargets.isColorTarget(glId)) {
+            return -1;
+        }
+        RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        if (main != null) {
+            GpuTextureView mainView = main.getColorTextureView();
+            if (mainView != null && mainView.texture() instanceof GlTexture mainTex
+                && mainTex.glId() == glId) {
+                return -1; // the main framebuffer -- keep it on the overlay path
+            }
+        }
+        return glId;
+    }
+
+    // Apply the pipeline's authored depth test (26.2 is reverse-Z: DepthStencilState.DEFAULT =
+    // GREATER_THAN_OR_EQUAL, write) + back-face cull, so item models rendered into the atlas
+    // self-occlude correctly. Only used on the RTT path.
+    @Unique
+    private void radiance$applyPipelineDepthAndCull() {
+        DepthStencilState depth = this.radiance$pipeline.getDepthStencilState();
+        PipelineStateProxy.DepthStencilState.setDepthTestEnable(true);
+        PipelineStateProxy.DepthStencilState.setDepthWriteEnable(depth.writeDepth());
+        PipelineStateProxy.DepthStencilState.glSetDepthCompareOp(radiance$glDepthFunc(depth.depthTest()));
+        if (this.radiance$pipeline.isCull()) {
+            PipelineStateProxy.RasterizationState.glSetCullMode(GL11.GL_BACK);
+            PipelineStateProxy.RasterizationState.glSetFrontFace(GL11.GL_CCW);
+        } else {
+            PipelineStateProxy.RasterizationState.vkSetCullMode(
+                VulkanConstants.VkCullMode.VK_CULL_MODE_NONE.getValue());
+        }
+    }
+
+    @Unique
+    private static void radiance$resetDepthAndCull() {
+        PipelineStateProxy.DepthStencilState.setDepthTestEnable(false);
+        PipelineStateProxy.DepthStencilState.setDepthWriteEnable(false);
+        PipelineStateProxy.RasterizationState.vkSetCullMode(
+            VulkanConstants.VkCullMode.VK_CULL_MODE_NONE.getValue());
+    }
+
+    @Unique
+    private static int radiance$glDepthFunc(CompareOp op) {
+        return switch (op) {
+            case ALWAYS_PASS -> GL11.GL_ALWAYS;
+            case LESS_THAN -> GL11.GL_LESS;
+            case LESS_THAN_OR_EQUAL -> GL11.GL_LEQUAL;
+            case EQUAL -> GL11.GL_EQUAL;
+            case NOT_EQUAL -> GL11.GL_NOTEQUAL;
+            case GREATER_THAN_OR_EQUAL -> GL11.GL_GEQUAL;
+            case GREATER_THAN -> GL11.GL_GREATER;
+            case NEVER_PASS -> GL11.GL_NEVER;
+        };
     }
 
     // 26.2 bakes blend state into each RenderPipeline's ColorTargetState. The replay path cancels the
