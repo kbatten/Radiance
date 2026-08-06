@@ -25,6 +25,7 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.radiance.client.DrawInterceptStats;
+import com.radiance.client.RadianceDebug;
 import com.radiance.client.constant.Constants;
 import com.radiance.client.constant.VulkanConstants;
 import com.radiance.client.proxy.vulkan.BufferProxy;
@@ -248,6 +249,14 @@ public abstract class RenderPassMixins {
         // definition, so this resolves once per program rather than retrying every frame.
         if (shader.nativeId() < 0) {
             DrawInterceptStats.shaderUnavailable();
+            // If this unavailable draw was targeting an off-screen render target (e.g. the GuiItemAtlas),
+            // the atlas will never be populated and its icons stay empty -- distinct from a routing or
+            // clear bug. Log once per pipeline so that failure mode is unambiguous next run.
+            if (radiance$resolveRenderTarget() >= 0
+                && radiance$loggedRtShaderMiss.add(radiance$pipelineLoc())) {
+                RadianceDebug.log("[RTT] shader UNAVAILABLE for render-target draw, pipeline="
+                    + radiance$pipelineLoc());
+            }
             return;
         }
 
@@ -331,17 +340,30 @@ public abstract class RenderPassMixins {
     // RTT, else -1. A pass targets RTT when its color attachment is a registered render-target texture
     // (created with USAGE_RENDER_ATTACHMENT) that is NOT the main framebuffer -- the main GUI target,
     // which must keep going to the overlay.
+    //
+    // The primary signal is RenderSystem.outputColorTextureOverride: MC redirects off-screen renders
+    // (GuiItemAtlas item models) by setting that static override, which PreparedRenderType.drawFromBuffer
+    // then uses as the created pass's color attachment. It is still non-null here (this drawIndexed runs
+    // inside renderAllFeatures, before drawToSlot resets it), so reading it directly is the exact
+    // mechanism and does not depend on how createRenderPass populated colorAttachments. Fall back to the
+    // pass's own color attachment for any other render-to-texture user.
     @Unique
     private int radiance$resolveRenderTarget() {
-        if (this.colorAttachments == null || this.colorAttachments.isEmpty()) {
+        int glId = radiance$glIdOf(RenderSystem.outputColorTextureOverride);
+        if (glId < 0) {
+            glId = radiance$attachmentColorGlId();
+        }
+        if (glId < 0) {
             return -1;
         }
-        GpuTextureView view = this.colorAttachments.get(0).textureView();
-        if (view == null || !(view.texture() instanceof GlTexture glTexture)) {
-            return -1;
-        }
-        int glId = glTexture.glId();
         if (!RenderTargets.isColorTarget(glId)) {
+            // A render target is active but was never imported as one (missed the USAGE_RENDER_ATTACHMENT
+            // import in TextureUtilMixins) -- it would sample uninitialised. Log once so the miss is
+            // visible instead of silently falling back to the overlay.
+            if (radiance$loggedRtUnregistered.add(glId)) {
+                RadianceDebug.log("[RTT] active render target glId=" + glId
+                    + " is NOT registered as a color target (import missed?)");
+            }
             return -1;
         }
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
@@ -352,8 +374,39 @@ public abstract class RenderPassMixins {
                 return -1; // the main framebuffer -- keep it on the overlay path
             }
         }
+        if (radiance$loggedRtRoutes.add(glId)) {
+            RadianceDebug.log("[RTT] routing draws to render target glId=" + glId);
+        }
         return glId;
     }
+
+    @Unique
+    private int radiance$attachmentColorGlId() {
+        if (this.colorAttachments == null || this.colorAttachments.isEmpty()) {
+            return -1;
+        }
+        return radiance$glIdOf(this.colorAttachments.get(0).textureView());
+    }
+
+    @Unique
+    private static int radiance$glIdOf(GpuTextureView view) {
+        if (view != null && view.texture() instanceof GlTexture glTexture) {
+            return glTexture.glId();
+        }
+        return -1;
+    }
+
+    // Diagnostic dedup sets (temporary RTT bring-up scaffolding -- strip with the rest). Keyed so each
+    // distinct condition logs once and never spams the frame loop.
+    @Unique
+    private static final java.util.Set<Integer> radiance$loggedRtRoutes =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+    @Unique
+    private static final java.util.Set<Integer> radiance$loggedRtUnregistered =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+    @Unique
+    private static final java.util.Set<String> radiance$loggedRtShaderMiss =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // Apply the pipeline's authored depth test (26.2 is reverse-Z: DepthStencilState.DEFAULT =
     // GREATER_THAN_OR_EQUAL, write) + back-face cull, so item models rendered into the atlas
