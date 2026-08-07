@@ -34,6 +34,7 @@ import net.minecraft.client.renderer.state.level.SectionUpdateRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.core.SectionPos;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
@@ -192,10 +193,19 @@ public abstract class WorldRendererMixins {
         int submersionType = cameraState.fogType.ordinal();
         int moonPhase = skyRenderState.moonPhase.index();
         float rainGradient = level != null ? level.getRainLevel(partialTick) : 0.0F;
-        // 26.2 TODO: sun/moon are atlas sprites now (SkyRenderer), not standalone textures; 0 until
-        // the atlas sprite GL ids + UVs are resolved for the native sky shader.
-        int sunTextureID = 0;
-        int moonTextureID = 0;
+        // 26.2 stitches the sun and each moon phase into a shared `celestials` TextureAtlas (SkyRenderer),
+        // so there is no standalone sun/moon GL texture to hand the RT sky shader. The source PNGs still
+        // ship, though, and TextureManager.getTexture lazily registers+loads any path as its own
+        // full-extent SimpleTexture (the exact route END_SKY_LOCATION above already relies on). Load the
+        // sun and the *current* phase's moon disc as standalone textures; each moon phase is now its own
+        // file (moon_phases.png's 4x2 grid is gone), named by MoonPhase.getSerializedName().
+        int sunTextureID = radiance$resolveGlId(textureManager
+            .getTexture(Identifier.withDefaultNamespace("textures/environment/celestial/sun.png"))
+            .getTextureView());
+        int moonTextureID = radiance$resolveGlId(textureManager
+            .getTexture(Identifier.withDefaultNamespace("textures/environment/celestial/moon/"
+                + skyRenderState.moonPhase.getSerializedName() + ".png"))
+            .getTextureView());
 
         BufferProxy.updateSkyUniform(ARGB.redFloat(baseColor), ARGB.greenFloat(baseColor),
             ARGB.blueFloat(baseColor), ARGB.redFloat(horizonColor), ARGB.greenFloat(horizonColor),
