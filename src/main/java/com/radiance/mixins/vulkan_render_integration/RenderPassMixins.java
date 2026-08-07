@@ -410,21 +410,21 @@ public abstract class RenderPassMixins {
     }
 
     // Apply the pipeline's authored depth test (26.2 is reverse-Z: DepthStencilState.DEFAULT =
-    // GREATER_THAN_OR_EQUAL, write) + back-face cull, so item models rendered into the atlas
-    // self-occlude correctly. Only used on the RTT path.
+    // GREATER_THAN_OR_EQUAL, write) so item/entity models rendered into the target self-occlude
+    // correctly. Only used on the RTT path.
+    //
+    // Cull is forced OFF: the native RTT pass renders with a Y-flipped (negative-height) viewport so its
+    // texture is stored GL-bottom-up for MC's V-flipped blit, and that flip inverts triangle winding.
+    // Back-face cull with the pipeline's authored winding would then remove exactly the faces that should
+    // show. Depth test (reverse-Z GEQUAL) already gives correct opaque self-occlusion without cull.
     @Unique
     private void radiance$applyPipelineDepthAndCull() {
         DepthStencilState depth = this.radiance$pipeline.getDepthStencilState();
         PipelineStateProxy.DepthStencilState.setDepthTestEnable(true);
         PipelineStateProxy.DepthStencilState.setDepthWriteEnable(depth.writeDepth());
         PipelineStateProxy.DepthStencilState.glSetDepthCompareOp(radiance$glDepthFunc(depth.depthTest()));
-        if (this.radiance$pipeline.isCull()) {
-            PipelineStateProxy.RasterizationState.glSetCullMode(GL11.GL_BACK);
-            PipelineStateProxy.RasterizationState.glSetFrontFace(GL11.GL_CCW);
-        } else {
-            PipelineStateProxy.RasterizationState.vkSetCullMode(
-                VulkanConstants.VkCullMode.VK_CULL_MODE_NONE.getValue());
-        }
+        PipelineStateProxy.RasterizationState.vkSetCullMode(
+            VulkanConstants.VkCullMode.VK_CULL_MODE_NONE.getValue());
     }
 
     @Unique
