@@ -17,7 +17,6 @@ how each feature worked in 1.21.x.
 | 5 | **Animated textures** (water/lava/fire/portal flow) | ⚠️ | atlas upload path (native `textures.cpp`) | First frame only — 26.2 fills animated frames via an un-replayed `animate_sprite_blit` render-to-texture. Needs the same CPU-copy path the static atlas fix used. Pairs with #4 (lava is animated *and* emissive). |
 | 6 | **Block-targeting highlight wireframe** | ⚠️ | `EntityProxy.queueTargetBlockOutlineRebuild:371` → `submitShapeOutline` + `RenderTypes.lines()` | Box outline renders wrong: facing east, edges shoot *past* the block (away + to the right) forming an "L" instead of a closed box. MC's `lines()` vertex format carries a per-vertex **normal (line direction) + line width** that MC expands into screen-facing quads in a vertex shader the RT path never runs — the capture likely mis-handles the normal/line-width (baking it into position). NB `StorageOutlineVertexConsumerProvider` is the *entity glow* outline, a different path — don't conflate. |
 | 7 | **Sun & moon discs** | ❌ | `WorldRendererMixins:194-197` | `sunTextureID=0, moonTextureID=0`. In 26.2 sun/moon are atlas sprites (SkyRenderer) — feed the sprite GL-id + UVs to the native sky shader. |
-| 8 | **Menu panorama / sky cubemap** | 🔁 | panorama samplerCube path | Was visible ~07-20, regressed to black; prime suspect was Iris hooking the sky. **Retest with Iris removed** — likely a quick win. |
 | 9 | **Fog shape** + **sky-dark** | ⚠️ | `WorldRendererMixins:165,190` | Fog hardcoded SPHERE (`FogData` dropped shape) → cylindrical fog wrong. `skyDark=false` hardcoded (no render-state flag replaces `isSkyDark`). Small; batch with the sky pass. |
 | 10 | **Particles** (block break, smoke, crits…) | ❌ | `EntityProxy.queueParticleRebuild` (no-op) | 26.2 moved particles to `submitQuadParticleGroup` — needs a new capture hook. Bigger. |
 | 11 | **Weather** (rain/snow) | ❌ | `EntityProxy.queueWeatherBuild` (no-op) | 26.2 weather no longer goes through a `VertexConsumer` — needs a `WeatherEffectRenderer` hook. |
@@ -33,6 +32,7 @@ how each feature worked in 1.21.x.
 
 ## Done this port (recent)
 
+- ✅ Menu panorama / sky cubemap (#8) — user-confirmed working 2026-08-06 (regression cleared once Iris was removed).
 - ✅ Intermittent corrupt-TLAS crash (~10s–2min in-world) — native barrier fix (MCVR).
 - ✅ Invisible terrain after walking (#1).
 - ✅ Compositing, world flip (reverse-Z), black sky, black terrain lighting, buttons, text.
