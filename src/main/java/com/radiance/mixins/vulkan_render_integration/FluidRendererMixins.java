@@ -1,6 +1,7 @@
 package com.radiance.mixins.vulkan_render_integration;
 
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.radiance.client.vertex.BlockEmissionContext;
 import net.minecraft.client.renderer.block.BlockAndTintGetter;
 import net.minecraft.client.renderer.block.FluidModel;
 import net.minecraft.client.renderer.block.FluidRenderer;
@@ -144,6 +145,13 @@ public abstract class FluidRendererMixins {
         if (renderUp || renderDown || renderEast || renderWest || renderNorth || renderSouth) {
             FluidModel model = this.fluidModels.get(fluidState);
             VertexConsumer builder = output.getBuilder(model.layer());
+            // Emissive fluids (lava) must light the scene: feed the fluid block's light-emission level
+            // (lava = 15, water = 0) into the per-vertex albedoEmission channel, the same vanilla
+            // fallback solid emissive blocks use (BlockModelRendererMixins). PBRVertexConsumer writes it
+            // for every fluid vertex below, and native buildLightInfos synthesizes a whole-quad area
+            // light from it when no LabPBR emission cell covers the quad. Cleared before the method
+            // returns so following geometry never inherits it. Water (level 0) is left untouched.
+            BlockEmissionContext.set(blockState.getLightEmission() / 15.0F);
             int tintColor = model.tintSource() != null
                 ? model.tintSource().colorInWorld(blockState, level, pos)
                 : -1;
@@ -349,6 +357,9 @@ public abstract class FluidRendererMixins {
             }
         }
 
+        // Clear the emission the render block may have set so the next section geometry (a non-emissive
+        // block/fluid) never inherits a stale value. Safe when unset.
+        BlockEmissionContext.clear();
         ci.cancel();
     }
 }
