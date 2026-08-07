@@ -202,13 +202,19 @@ public class BufferProxy {
 
     public static native void updateSkyUniform(long ptr);
 
+    // Handheld/dynamic point lights appended to the SkyUBO. Must match MCVR_MAX_DYNAMIC_LIGHTS and the
+    // DynamicLight layout in shared.hpp: MAX lights of 8 floats each (px,py,pz,intensity, r,g,b,range).
+    public static final int MAX_DYNAMIC_LIGHTS = 4;
+    private static final int DYNAMIC_LIGHT_FLOATS = 8;
+
     public static void updateSkyUniform(float baseColorR, float baseColorG, float baseColorB,
         float horizonColorR, float horizonColorG, float horizonColorB, float horizonColorA,
         Vector3f sunDirection, int skyType, boolean sunRisingOrSetting, boolean skyDark,
         boolean hasBlindnessOrDarkness, int submersionType, int moonPhase, float rainGradient,
-        int sunTextureID, int moonTextureID) {
+        int sunTextureID, int moonTextureID, int dynamicLightCount, float[] dynamicLights) {
         try (MemoryStack stack = stackPush()) {
-            int size = 80;
+            // 80-byte sky header + MAX * 32-byte DynamicLight array (see shared.hpp SkyUBO).
+            int size = 80 + MAX_DYNAMIC_LIGHTS * DYNAMIC_LIGHT_FLOATS * Float.BYTES;
             ByteBuffer bb = stack.malloc(size);
             long addr = memAddress(bb);
             int baseAddr = 0;
@@ -254,7 +260,18 @@ public class BufferProxy {
             baseAddr += Integer.BYTES;
             bb.putInt(baseAddr, moonTextureID);
             baseAddr += Integer.BYTES;
-            bb.putInt(baseAddr, 0);
+            // Replaces the old pad0 slot: number of active dynamic lights.
+            int activeLights = Math.max(0, Math.min(dynamicLightCount, MAX_DYNAMIC_LIGHTS));
+            bb.putInt(baseAddr, activeLights);
+            baseAddr += Integer.BYTES;
+
+            // DynamicLight[MAX_DYNAMIC_LIGHTS]: 8 floats each; zero-fill inactive slots so stale bytes
+            // never read as a light (intensity <= 0 is treated as inactive by the shader anyway).
+            int provided = dynamicLights == null ? 0 : dynamicLights.length;
+            for (int i = 0; i < MAX_DYNAMIC_LIGHTS * DYNAMIC_LIGHT_FLOATS; i++) {
+                bb.putFloat(baseAddr, i < provided ? dynamicLights[i] : 0.0f);
+                baseAddr += Float.BYTES;
+            }
 
             updateSkyUniform(addr);
         }

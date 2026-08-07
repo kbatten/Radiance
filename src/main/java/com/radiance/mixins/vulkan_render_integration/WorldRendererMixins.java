@@ -37,6 +37,9 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
@@ -86,6 +89,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(LevelRenderer.class)
 public abstract class WorldRendererMixins {
+
+    // Radiance scale for a handheld light at full block level (15). Roughly the sun's radiance so a
+    // carried torch reads bright near the source and falls off inverse-square. Compile-time constant
+    // (inlined -> no mixin <clinit>, safe per the static-final gotcha). Tune to taste.
+    @Unique
+    private static final float RADIANCE_HANDHELD_LIGHT_GAIN = 10.0F;
 
     @Shadow
     @Final
@@ -207,11 +216,39 @@ public abstract class WorldRendererMixins {
                 + skyRenderState.moonPhase.getSerializedName() + ".png"))
             .getTextureView());
 
+        // ===================== Handheld dynamic lights =====================
+        // Vanilla has no dynamic lighting; when the player carries a light-emitting item, synthesize a
+        // point light at the player so it casts real light into the ray-traced world (a carried torch).
+        // Position is camera-relative scene space (world - cameraPos, matching worldUBO.cameraPos), so it
+        // needs no absolute coordinates. Main and off hand collapse to one light at the max level.
+        int radiance$dynamicLightCount = 0;
+        float[] radiance$dynamicLights = new float[BufferProxy.MAX_DYNAMIC_LIGHTS * 8];
+        Player radiance$player = client.player;
+        if (radiance$player != null) {
+            int radiance$level = Math.max(radiance$heldLightLevel(radiance$player.getMainHandItem()),
+                radiance$heldLightLevel(radiance$player.getOffhandItem()));
+            if (radiance$level > 0) {
+                // Sit the light a little below the eye, like a torch held low.
+                Vec3 radiance$lightPos = radiance$player.getEyePosition(partialTick).subtract(0.0, 0.4, 0.0);
+                float radiance$t = radiance$level / 15.0F;
+                float radiance$intensity = radiance$t * radiance$t * RADIANCE_HANDHELD_LIGHT_GAIN;
+                radiance$dynamicLights[0] = (float) (radiance$lightPos.x - cameraState.pos.x);
+                radiance$dynamicLights[1] = (float) (radiance$lightPos.y - cameraState.pos.y);
+                radiance$dynamicLights[2] = (float) (radiance$lightPos.z - cameraState.pos.z);
+                radiance$dynamicLights[3] = radiance$intensity;
+                radiance$dynamicLights[4] = 1.0F;  // warm torch tint (linear RGB)
+                radiance$dynamicLights[5] = 0.8F;
+                radiance$dynamicLights[6] = 0.5F;
+                radiance$dynamicLights[7] = radiance$level; // reach in blocks (vanilla light spread)
+                radiance$dynamicLightCount = 1;
+            }
+        }
+
         BufferProxy.updateSkyUniform(ARGB.redFloat(baseColor), ARGB.greenFloat(baseColor),
             ARGB.blueFloat(baseColor), ARGB.redFloat(horizonColor), ARGB.greenFloat(horizonColor),
             ARGB.blueFloat(horizonColor), ARGB.alphaFloat(horizonColor), sunDirection, skyType,
             sunRisingOrSetting, skyDark, hasBlindnessOrDarkness, submersionType, moonPhase,
-            rainGradient, sunTextureID, moonTextureID);
+            rainGradient, sunTextureID, moonTextureID, radiance$dynamicLightCount, radiance$dynamicLights);
 
         BufferProxy.updateMapping();
 
@@ -323,5 +360,19 @@ public abstract class WorldRendererMixins {
     @Unique
     private static int radiance$resolveGlId(GpuTextureView view) {
         return view != null && view.texture() instanceof GlTexture glTexture ? glTexture.glId() : 0;
+    }
+
+    /**
+     * Vanilla block light level (0-15) of a held item, or 0 if it emits no light. Maps the item back to
+     * its block ({@link Block#byItem}) and reads the default state's emission -- torch, lantern,
+     * glowstone, sea lantern, jack o'lantern, redstone torch, etc. Non-block or non-emissive items and
+     * empty stacks return 0 (AIR emits 0).
+     */
+    @Unique
+    private static int radiance$heldLightLevel(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return 0;
+        }
+        return Block.byItem(stack.getItem()).defaultBlockState().getLightEmission();
     }
 }
