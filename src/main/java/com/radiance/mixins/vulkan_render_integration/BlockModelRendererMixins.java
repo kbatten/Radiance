@@ -49,6 +49,19 @@ public abstract class BlockModelRendererMixins {
         float emission = tintIndex != -1
             ? ((IBlockColorsExt) this.blockColors).radiance$getEmission(state, level, pos, tintIndex)
             : 0.0F;
+        // Vanilla fallback: emissive blocks (torch, glowstone, lava, fire, sea lantern, ...) carry a
+        // 0-15 light-emission level but usually no LabPBR specular emission and no tinted emission
+        // provider, so the above yields 0 and they never light the scene. Derive emission from the
+        // block's light level so they act as path-tracer light emitters even without a PBR pack. Native
+        // buildLightInfos turns a nonzero per-vertex albedoEmission into a whole-quad area light when no
+        // LabPBR emission cell covers the quad (so a PBR pack, once wired, still wins where it marks a
+        // block emissive).
+        if (emission <= 0.0F) {
+            int lightLevel = state.getLightEmission();
+            if (lightLevel > 0) {
+                emission = lightLevel / 15.0F;
+            }
+        }
         BlockEmissionContext.set(emission);
     }
 
