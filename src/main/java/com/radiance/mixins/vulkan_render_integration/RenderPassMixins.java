@@ -25,7 +25,7 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.radiance.client.DrawInterceptStats;
-import com.radiance.client.RadianceDebug;
+import com.radiance.client.RttDebug;
 import com.radiance.client.constant.Constants;
 import com.radiance.client.constant.VulkanConstants;
 import com.radiance.client.proxy.vulkan.BufferProxy;
@@ -75,10 +75,14 @@ public abstract class RenderPassMixins {
 
     @Unique
     private RenderPipeline radiance$pipeline;
+    // Lazily initialized (see radiance$uniforms()/radiance$textures()), NOT field initializers: this
+    // mixin must carry no non-constant static-final field (no <clinit>), because that stops Mixin from
+    // merging @Unique instance-field initializers into RenderPass's constructor -- which left these null
+    // and NPE'd the first setUniform at startup. Lazy getters keep them non-null regardless.
     @Unique
-    private final Map<String, GpuBufferSlice> radiance$uniforms = new HashMap<>();
+    private Map<String, GpuBufferSlice> radiance$uniforms;
     @Unique
-    private final Object2IntMap<String> radiance$textures = new Object2IntOpenHashMap<>();
+    private Object2IntMap<String> radiance$textures;
     @Unique
     private GpuBufferSlice radiance$vertexBuffer;
     @Unique
@@ -98,6 +102,22 @@ public abstract class RenderPassMixins {
     @Unique
     private boolean radiance$rtBegun;
 
+    @Unique
+    private Map<String, GpuBufferSlice> radiance$uniforms() {
+        if (this.radiance$uniforms == null) {
+            this.radiance$uniforms = new HashMap<>();
+        }
+        return this.radiance$uniforms;
+    }
+
+    @Unique
+    private Object2IntMap<String> radiance$textures() {
+        if (this.radiance$textures == null) {
+            this.radiance$textures = new Object2IntOpenHashMap<>();
+        }
+        return this.radiance$textures;
+    }
+
     @Inject(method = "setPipeline", at = @At("HEAD"))
     private void radiance$onSetPipeline(RenderPipeline pipeline, CallbackInfo ci) {
         this.radiance$pipeline = pipeline;
@@ -106,7 +126,7 @@ public abstract class RenderPassMixins {
     @Inject(method = "setUniform(Ljava/lang/String;Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V",
         at = @At("HEAD"))
     private void radiance$onSetUniform(String name, GpuBufferSlice value, CallbackInfo ci) {
-        this.radiance$uniforms.put(name, value);
+        this.radiance$uniforms().put(name, value);
     }
 
     @Inject(method = "setVertexBuffer", at = @At("HEAD"))
@@ -130,7 +150,7 @@ public abstract class RenderPassMixins {
         if (textureView != null && textureView.texture() instanceof GlTexture glTexture) {
             glId = glTexture.glId();
         }
-        this.radiance$textures.put(name, glId);
+        this.radiance$textures().put(name, glId);
     }
 
     // Scissor has to be captured from the front RenderPass, not the GL state manager. MC applies it
@@ -252,10 +272,8 @@ public abstract class RenderPassMixins {
             // If this unavailable draw was targeting an off-screen render target (e.g. the GuiItemAtlas),
             // the atlas will never be populated and its icons stay empty -- distinct from a routing or
             // clear bug. Log once per pipeline so that failure mode is unambiguous next run.
-            if (radiance$resolveRenderTarget() >= 0
-                && radiance$loggedRtShaderMiss.add(radiance$pipelineLoc())) {
-                RadianceDebug.log("[RTT] shader UNAVAILABLE for render-target draw, pipeline="
-                    + radiance$pipelineLoc());
+            if (radiance$resolveRenderTarget() >= 0) {
+                RttDebug.logShaderMissOnce(radiance$pipelineLoc());
             }
             return;
         }
@@ -287,7 +305,7 @@ public abstract class RenderPassMixins {
 
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 ShaderProxy.UniformHandle uniform = ShaderProxy.createUniform(shader,
-                    this.radiance$uniforms, this.radiance$textures, stack);
+                    this.radiance$uniforms(), this.radiance$textures(), stack);
                 int indexTypeValue = Constants.IndexTypes.getValue(this.radiance$indexType);
                 if (rtColorId >= 0) {
                     radiance$applyPipelineDepthAndCull();
@@ -317,7 +335,7 @@ public abstract class RenderPassMixins {
 
         DrawInterceptStats.replayed();
         DrawInterceptStats.notePipeline(String.valueOf(this.radiance$pipeline.getLocation()),
-            "drawIndexed", this.radiance$textures.toString());
+            "drawIndexed", this.radiance$textures().toString());
         DrawInterceptStats.noteVertex(String.valueOf(this.radiance$pipeline.getLocation()),
             System.identityHashCode(this.radiance$vertexBuffer.buffer()),
             this.radiance$vertexBuffer.offset(), vertexOffset, firstIndex, stride, vertexData);
@@ -360,10 +378,7 @@ public abstract class RenderPassMixins {
             // A render target is active but was never imported as one (missed the USAGE_RENDER_ATTACHMENT
             // import in TextureUtilMixins) -- it would sample uninitialised. Log once so the miss is
             // visible instead of silently falling back to the overlay.
-            if (radiance$loggedRtUnregistered.add(glId)) {
-                RadianceDebug.log("[RTT] active render target glId=" + glId
-                    + " is NOT registered as a color target (import missed?)");
-            }
+            RttDebug.logUnregisteredOnce(glId);
             return -1;
         }
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
@@ -374,9 +389,7 @@ public abstract class RenderPassMixins {
                 return -1; // the main framebuffer -- keep it on the overlay path
             }
         }
-        if (radiance$loggedRtRoutes.add(glId)) {
-            RadianceDebug.log("[RTT] routing draws to render target glId=" + glId);
-        }
+        RttDebug.logRouteOnce(glId);
         return glId;
     }
 
@@ -395,18 +408,6 @@ public abstract class RenderPassMixins {
         }
         return -1;
     }
-
-    // Diagnostic dedup sets (temporary RTT bring-up scaffolding -- strip with the rest). Keyed so each
-    // distinct condition logs once and never spams the frame loop.
-    @Unique
-    private static final java.util.Set<Integer> radiance$loggedRtRoutes =
-        java.util.concurrent.ConcurrentHashMap.newKeySet();
-    @Unique
-    private static final java.util.Set<Integer> radiance$loggedRtUnregistered =
-        java.util.concurrent.ConcurrentHashMap.newKeySet();
-    @Unique
-    private static final java.util.Set<String> radiance$loggedRtShaderMiss =
-        java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // Apply the pipeline's authored depth test (26.2 is reverse-Z: DepthStencilState.DEFAULT =
     // GREATER_THAN_OR_EQUAL, write) + back-face cull, so item models rendered into the atlas
