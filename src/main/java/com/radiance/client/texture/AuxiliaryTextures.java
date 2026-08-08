@@ -140,12 +140,19 @@ public enum AuxiliaryTextures {
         }
     }
 
-    public static void loadAndUpload(NativeImage source, INativeImageExt sourceExt, int level,
+    /**
+     * Upload the specular/normal/flag LabPBR aux maps for one base image region and decode its emission
+     * cells. 26.2 caller passes {@code targetId} (the base texture's GL id) and {@code identifier} (its
+     * source resource id, e.g. {@code minecraft:textures/block/glowstone.png}) explicitly, because the
+     * old per-image {@code NativeImage.uploadInternal} route that carried them is gone -- block/item
+     * sprites now arrive per-sprite through {@code TextureAtlasMixins}, standalone textures through
+     * {@code CommandEncoder.writeToTexture}. The pre-decoded aux images live in {@code DECODED_IMAGE_CACHE}
+     * (filled by {@link AuxiliaryTextureReloader}); a base texture with no {@code _s}/{@code _n}/{@code _f}
+     * file gets a constant-filled default. No-op unless the resource path is a tracked block/item/entity.
+     */
+    public static void loadAndUpload(NativeImage source, int targetId, Identifier identifier, int level,
         int offsetX, int offsetY, int unpackSkipPixels, int unpackSkipRows, int regionWidth,
-        int regionHeight, boolean blur) {
-        int targetId = sourceExt.radiance$getTargetID();
-        Identifier identifier = sourceExt.radiance$getIdentifier();
-
+        int regionHeight) {
         if (identifier != null) {
             if (isAuxiliaryTexture(identifier)) {
                 return;
@@ -157,25 +164,34 @@ public enum AuxiliaryTextures {
 
                 // ensure the texture exists
                 TextureTracker.Texture texture = TextureTracker.GLID2Texture.get(targetId);
+                if (texture == null) {
+                    // Base texture not tracked yet (dimensions/format unknown) -- can't size the aux atlas.
+                    return;
+                }
                 if (!auxiliaryTexture.GLIDMapping.containsKey(targetId)) {
                     auxiliaryTargetId = TextureProxy.generateTextureId();
-//                    System.out.println(
-//                        "generate " + auxiliaryTexture.name + " texture for " + targetId + ": "
-//                            + auxiliaryTargetId);
-
                     TextureProxy.prepareImage(auxiliaryTargetId, texture.maxLayer(), texture.width(),
                         texture.height(), texture.format());
                     auxiliaryTexture.GLIDMapping.put(targetId, auxiliaryTargetId);
+                    // The aux atlas is created straight through TextureProxy (not MC's GpuTexture path
+                    // that TextureUtilMixins tracks), so register it ourselves -- otherwise the next
+                    // sprite's else-branch dimension check dereferences a null tracker entry.
+                    TextureTracker.GLID2Texture.put(auxiliaryTargetId, new TextureTracker.Texture(
+                        texture.width(), texture.height(), texture.channel(), texture.format(),
+                        texture.maxLayer()));
                 } else {
                     auxiliaryTargetId = auxiliaryTexture.GLIDMapping.get(targetId);
 
                     TextureTracker.Texture auxiliaryTrackerTexture = TextureTracker.GLID2Texture.get(
                         auxiliaryTargetId);
-                    if (texture.width() != auxiliaryTrackerTexture.width()
+                    if (auxiliaryTrackerTexture == null || texture.width() != auxiliaryTrackerTexture.width()
                         || texture.height() != auxiliaryTrackerTexture.height()
                         || texture.format() != auxiliaryTrackerTexture.format()) {
                         TextureProxy.prepareImage(auxiliaryTargetId, texture.maxLayer(), texture.width(),
                         texture.height(), texture.format());
+                        TextureTracker.GLID2Texture.put(auxiliaryTargetId, new TextureTracker.Texture(
+                            texture.width(), texture.height(), texture.channel(), texture.format(),
+                            texture.maxLayer()));
                     }
                 }
 
@@ -361,7 +377,8 @@ public enum AuxiliaryTextures {
         }
     }
 
-    private static boolean isTrackedTexturePath(String path) {
+    /** True for the block/item/entity texture paths that carry LabPBR aux maps (skips GUI, particles, etc.). */
+    public static boolean isTrackedTexturePath(String path) {
         return path.startsWith("textures/block/")
             || path.startsWith("textures/item/")
             || path.startsWith("textures/entity/");

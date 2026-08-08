@@ -4,6 +4,7 @@ import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.radiance.client.proxy.vulkan.TextureProxy;
+import com.radiance.client.texture.AuxiliaryTextures;
 import com.radiance.client.texture.SpriteAnimationMirror;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IAbstractTextureExt;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.ISpriteContentsExt;
@@ -14,6 +15,8 @@ import java.util.Map;
 import net.minecraft.client.renderer.texture.SpriteContents;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.renderer.texture.atlas.SpriteSource;
+import net.minecraft.resources.Identifier;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -84,6 +87,13 @@ public abstract class TextureAtlasMixins {
             int padding = ((ITextureAtlasSpriteExt) sprite).radiance$getPadding();
             int originX = sprite.getX() + padding;
             int originY = sprite.getY() + padding;
+            // #4 Part A: this sprite's LabPBR aux maps are keyed by its *source resource id*
+            // (minecraft:textures/block/x.png), the same key AuxiliaryTextureReloader decoded the _s/_n/_f
+            // files under. contents().name() is the sprite id (minecraft:block/x); convert it to the file id.
+            // Only block/item/entity sprites carry aux maps -- skip GUI/particle atlases so we never spin up
+            // empty aux atlases for them.
+            Identifier resourceId = SpriteSource.TEXTURE_ID_CONVERTER.idToFile(contents.name());
+            boolean auxRelevant = AuxiliaryTextures.isTrackedTexturePath(resourceId.getPath());
             // Upload every mip the atlas actually has, so mipmapped atlases (blocks, items) are complete
             // rather than only sharp at level 0.
             int levels = Math.min(mipLevels.length, Math.max(this.mipLevelCount, 1));
@@ -106,6 +116,13 @@ public abstract class TextureAtlasMixins {
                     originY >> level,                    // dstOffsetY
                     width, height,
                     level);
+                // Mirror the sprite's specular/normal/flag maps into the parallel aux atlases and decode
+                // its emission cells at the same stitched position (a pack without PBR just fills defaults).
+                // Source offset is (0,0) = first frame, like the base upload above.
+                if (auxRelevant) {
+                    AuxiliaryTextures.loadAndUpload(image, atlasId, resourceId, level,
+                        originX >> level, originY >> level, 0, 0, width, height);
+                }
             }
         }
     }
