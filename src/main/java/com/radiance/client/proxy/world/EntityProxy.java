@@ -38,6 +38,8 @@ import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.particle.ParticleEngine;
+import net.minecraft.client.particle.SingleQuadParticle;
 import net.minecraft.client.renderer.WeatherEffectRenderer;
 import net.minecraft.client.renderer.WorldBorderRenderer;
 import net.minecraft.client.renderer.culling.Frustum;
@@ -47,6 +49,9 @@ import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.state.level.BlockBreakingRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
+import net.minecraft.client.renderer.state.level.ParticleGroupRenderState;
+import net.minecraft.client.renderer.state.level.ParticlesRenderState;
+import net.minecraft.client.renderer.state.level.QuadParticleRenderState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.CommonColors;
@@ -487,14 +492,63 @@ public class EntityProxy {
     }
 
     /**
-     * 26.2 TODO: particles moved to {@code submitQuadParticleGroup} / {@code
-     * QuadParticleFeatureRenderer}, which writes the {@code StagedVertexBuffer} directly and so
-     * bypasses the {@code RenderTypeFeatureRenderer} capture hook. A dedicated capture point
-     * ({@code QuadParticleFeatureRenderer} or {@code StagedVertexBuffer.getVertexBuilder(Draw)}) is
-     * needed. No-op until then so the render loop is unaffected.
+     * 26.2: particles no longer render through a per-particle {@code Particle.render(VertexConsumer,
+     * ...)} (removed) -- they {@code extract} into render states and are drawn by
+     * {@code QuadParticleFeatureRenderer} (a bare {@code FeatureRenderer}, NOT a
+     * {@code RenderTypeFeatureRenderer}) straight into a GPU {@code StagedVertexBuffer}, so the mod's
+     * {@code RenderTypeFeatureRenderer} capture hook never sees them.
+     *
+     * <p>Capture seam: {@link ParticleEngine#extract} fills a {@link ParticlesRenderState} whose sole
+     * concrete group type is {@link QuadParticleRenderState}; its
+     * {@code buildLayer(Layer, VertexConsumer)} re-emits each layer's quads into a
+     * {@link VertexConsumer}. Feed it the mod's {@link PBRVertexConsumer} (as {@code CloudRenderer}
+     * does for clouds) and hand the geometry to the native post-render <b>particle</b> pass. Each
+     * {@link SingleQuadParticle.Layer} carries the source atlas ({@code LOCATION_BLOCKS/ITEMS/
+     * PARTICLES}) + a translucency flag; keying the capture buffer on a synthesized
+     * {@code RenderTypes.entityCutout/entityTranslucent(atlas)} makes the existing texture-id and
+     * alpha-mode resolution ({@link StorageVertexConsumerProvider#resolveTextureId},
+     * {@link #resolveTextureGlId}) return the atlas GL id unchanged. Particle quads from
+     * {@code extract} are camera-relative, so build with {@code CAMERA_SHIFT} at origin (as in 1.21).
      */
     public static void queueParticleRebuild(Camera camera, float tickDelta, Frustum frustum) {
-        // no-op pending 26.2 particle-capture design (see javadoc)
+        ParticleEngine particleEngine = Minecraft.getInstance().particleEngine;
+        if (particleEngine == null) {
+            return;
+        }
+
+        ParticlesRenderState particlesRenderState = new ParticlesRenderState();
+        particleEngine.extract(particlesRenderState, frustum, camera, tickDelta);
+
+        List<StorageVertexConsumerProvider> storageVertexConsumerProviders = new ArrayList<>();
+        EntityRenderDataList entityRenderDataList = new EntityRenderDataList();
+
+        for (ParticleGroupRenderState group : particlesRenderState.particles) {
+            if (!(group instanceof QuadParticleRenderState quadGroup)) {
+                continue;
+            }
+
+            StorageVertexConsumerProvider store = new StorageVertexConsumerProvider(0);
+            boolean captured = false;
+            for (SingleQuadParticle.Layer layer : quadGroup.layers()) {
+                RenderType renderType = layer.translucent()
+                    ? RenderTypes.entityTranslucent(layer.textureAtlasLocation())
+                    : RenderTypes.entityCutout(layer.textureAtlasLocation());
+                quadGroup.buildLayer(layer, store.getBuffer(renderType));
+                captured = true;
+            }
+
+            if (!captured) {
+                store.close();
+                continue;
+            }
+
+            storageVertexConsumerProviders.add(store);
+            processPostEntityRenderData(store, System.identityHashCode(quadGroup), 0, 0, 0,
+                PostRenderFlags.PARTICLE, entityRenderDataList);
+        }
+
+        queueBuild(storageVertexConsumerProviders, entityRenderDataList, 0.0f,
+            Constants.Coordinates.CAMERA_SHIFT, false);
     }
 
     /**
