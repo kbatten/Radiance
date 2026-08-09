@@ -158,6 +158,18 @@ public enum AuxiliaryTextures {
                 return;
             }
 
+            // The aux atlases are created (below) with the base texture's mip-level count
+            // (maxLayer), so their valid mip indices are 0..maxLayer-1. But the per-sprite upload
+            // loop in TextureAtlasMixins iterates MC's TextureAtlas.mipLevelCount, which can exceed
+            // maxLayer for an atlas whose imported GpuTexture has fewer mips than MC's atlas declares.
+            // Copying into a mip the aux image doesn't have is an out-of-range vkCmdCopyBufferToImage
+            // that faults the device (a real crash -- surfaced once #4 Part A re-attached this path).
+            // Skip those levels; every mip the aux atlas actually has (0..maxLayer-1) is still filled.
+            TextureTracker.Texture baseTexture = TextureTracker.GLID2Texture.get(targetId);
+            if (baseTexture != null && level >= baseTexture.maxLayer()) {
+                return;
+            }
+
             for (AuxiliaryTextures auxiliaryTexture : ALL_TEXTURES) {
                 NativeImage auxiliaryTemplateImage = null;
                 int auxiliaryTargetId;
