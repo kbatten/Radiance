@@ -519,18 +519,22 @@ public class EntityProxy {
         ParticlesRenderState particlesRenderState = new ParticlesRenderState();
         particleEngine.extract(particlesRenderState, frustum, camera, tickDelta);
 
+        // Inject particles as world-RT geometry (the proven path -- terrain/mobs/clouds all reach the
+        // screen through it), NOT the post-render pass: capture confirmed the post pass runs and draws,
+        // but its output never composites into the presented image in 26.2 (a forced-opaque fragment was
+        // still invisible), so post particles are dropped. buildLayer's quads are CAMERA-RELATIVE
+        // (SingleQuadParticle.extractRotatedQuad subtracts Camera.position()); giving each group an entity
+        // origin of the camera position makes the native WORLD transform (entityPos - cameraPos = 0) leave
+        // them exactly where extract put them.
+        var camPos = camera.position();
+
         List<StorageVertexConsumerProvider> storageVertexConsumerProviders = new ArrayList<>();
         EntityRenderDataList entityRenderDataList = new EntityRenderDataList();
 
-        int dbgQuadGroups = 0;
-        int dbgLayers = 0;
-        int dbgVerts = 0;
-        int dbgFirstTexId = -1;
         for (ParticleGroupRenderState group : particlesRenderState.particles) {
             if (!(group instanceof QuadParticleRenderState quadGroup)) {
                 continue;
             }
-            dbgQuadGroups++;
 
             StorageVertexConsumerProvider store = new StorageVertexConsumerProvider(0);
             boolean captured = false;
@@ -538,16 +542,8 @@ public class EntityProxy {
                 RenderType renderType = layer.translucent()
                     ? RenderTypes.entityTranslucent(layer.textureAtlasLocation())
                     : RenderTypes.entityCutout(layer.textureAtlasLocation());
-                VertexConsumer vc = store.getBuffer(renderType);
-                quadGroup.buildLayer(layer, vc);
+                quadGroup.buildLayer(layer, store.getBuffer(renderType));
                 captured = true;
-                dbgLayers++;
-                if (vc instanceof PBRVertexConsumer pbr) {
-                    dbgVerts += pbr.getVertexCount();
-                }
-                if (dbgFirstTexId < 0) {
-                    dbgFirstTexId = resolveTextureGlId(renderType);
-                }
             }
 
             if (!captured) {
@@ -556,25 +552,14 @@ public class EntityProxy {
             }
 
             storageVertexConsumerProviders.add(store);
-            processPostEntityRenderData(store, System.identityHashCode(quadGroup), 0, 0, 0,
-                PostRenderFlags.PARTICLE, entityRenderDataList);
-        }
-
-        // TEMP diagnostic (#10): confirm capture. Throttled; look for [ParticleDbg] in latest.log.
-        long nowMs = System.currentTimeMillis();
-        if ((dbgVerts > 0 || dbgQuadGroups > 0) && nowMs - radiance$lastParticleDbgMs > 1000L) {
-            radiance$lastParticleDbgMs = nowMs;
-            System.err.println("[ParticleDbg] groups=" + particlesRenderState.particles.size()
-                + " quadGroups=" + dbgQuadGroups + " layers=" + dbgLayers + " verts=" + dbgVerts
-                + " firstTexId=" + dbgFirstTexId + " providers=" + storageVertexConsumerProviders.size());
+            processWorldEntityRenderData(store, System.identityHashCode(quadGroup),
+                camPos.x(), camPos.y(), camPos.z(), Constants.RayTracingFlags.WORLD, false,
+                entityRenderDataList);
         }
 
         queueBuild(storageVertexConsumerProviders, entityRenderDataList, 0.0f,
-            Constants.Coordinates.CAMERA_SHIFT, false);
+            Constants.Coordinates.WORLD, false);
     }
-
-    // TEMP diagnostic throttle for [ParticleDbg] (#10); remove with the log above.
-    private static long radiance$lastParticleDbgMs = 0L;
 
     /**
      * 26.2 TODO: weather no longer renders through a {@code VertexConsumer} --
