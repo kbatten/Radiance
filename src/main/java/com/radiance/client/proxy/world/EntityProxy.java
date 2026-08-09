@@ -522,10 +522,15 @@ public class EntityProxy {
         List<StorageVertexConsumerProvider> storageVertexConsumerProviders = new ArrayList<>();
         EntityRenderDataList entityRenderDataList = new EntityRenderDataList();
 
+        int dbgQuadGroups = 0;
+        int dbgLayers = 0;
+        int dbgVerts = 0;
+        int dbgFirstTexId = -1;
         for (ParticleGroupRenderState group : particlesRenderState.particles) {
             if (!(group instanceof QuadParticleRenderState quadGroup)) {
                 continue;
             }
+            dbgQuadGroups++;
 
             StorageVertexConsumerProvider store = new StorageVertexConsumerProvider(0);
             boolean captured = false;
@@ -533,8 +538,16 @@ public class EntityProxy {
                 RenderType renderType = layer.translucent()
                     ? RenderTypes.entityTranslucent(layer.textureAtlasLocation())
                     : RenderTypes.entityCutout(layer.textureAtlasLocation());
-                quadGroup.buildLayer(layer, store.getBuffer(renderType));
+                VertexConsumer vc = store.getBuffer(renderType);
+                quadGroup.buildLayer(layer, vc);
                 captured = true;
+                dbgLayers++;
+                if (vc instanceof PBRVertexConsumer pbr) {
+                    dbgVerts += pbr.getVertexCount();
+                }
+                if (dbgFirstTexId < 0) {
+                    dbgFirstTexId = resolveTextureGlId(renderType);
+                }
             }
 
             if (!captured) {
@@ -547,9 +560,21 @@ public class EntityProxy {
                 PostRenderFlags.PARTICLE, entityRenderDataList);
         }
 
+        // TEMP diagnostic (#10): confirm capture. Throttled; look for [ParticleDbg] in latest.log.
+        long nowMs = System.currentTimeMillis();
+        if ((dbgVerts > 0 || dbgQuadGroups > 0) && nowMs - radiance$lastParticleDbgMs > 1000L) {
+            radiance$lastParticleDbgMs = nowMs;
+            System.err.println("[ParticleDbg] groups=" + particlesRenderState.particles.size()
+                + " quadGroups=" + dbgQuadGroups + " layers=" + dbgLayers + " verts=" + dbgVerts
+                + " firstTexId=" + dbgFirstTexId + " providers=" + storageVertexConsumerProviders.size());
+        }
+
         queueBuild(storageVertexConsumerProviders, entityRenderDataList, 0.0f,
             Constants.Coordinates.CAMERA_SHIFT, false);
     }
+
+    // TEMP diagnostic throttle for [ParticleDbg] (#10); remove with the log above.
+    private static long radiance$lastParticleDbgMs = 0L;
 
     /**
      * 26.2 TODO: weather no longer renders through a {@code VertexConsumer} --
