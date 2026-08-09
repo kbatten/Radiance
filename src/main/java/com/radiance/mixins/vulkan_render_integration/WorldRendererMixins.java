@@ -283,7 +283,14 @@ public abstract class WorldRendererMixins {
         // ===================== Block-breaking crumbling =====================
         EntityProxy.queueCrumblingRebuild(levelRenderState);
 
-        // 26.2 TODO: particle / weather capture (EntityProxy no-op stubs for now).
+        // ===================== Particles =====================
+        // 26.2: extract each particle group's quads (ParticleEngine.extract + QuadParticleRenderState
+        // .buildLayer) into the mod's PBRVertexConsumer and feed the native post-render particle pass.
+        // See EntityProxy.queueParticleRebuild. (Weather is still a no-op stub pending its own capture.)
+        if (level != null) {
+            EntityProxy.queueParticleRebuild(gameRenderer.mainCamera(), partialTick,
+                cameraState.cullFrustum);
+        }
 
         // ===================== Clouds (CloudRendererMixins intercepts render() for capture) =======
         CloudStatus cloudStatus = optionsState.cloudStatus;
