@@ -6,6 +6,7 @@ import com.mojang.blaze3d.textures.GpuTexture;
 import com.radiance.client.proxy.vulkan.TextureProxy;
 import com.radiance.client.texture.AuxiliaryTextures;
 import com.radiance.client.texture.SpriteAnimationMirror;
+import com.radiance.client.texture.TextureTracker;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IAbstractTextureExt;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.ISpriteContentsExt;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.ITextureAtlasSpriteExt;
@@ -73,6 +74,7 @@ public abstract class TextureAtlasMixins {
             return;
         }
         int atlasId = glTexture.glId();
+        int atlasNativeMips = radiance$nativeAtlasMipCount(atlasId);
 
         for (TextureAtlasSprite sprite : this.sprites) {
             SpriteContents contents = sprite.contents();
@@ -95,8 +97,10 @@ public abstract class TextureAtlasMixins {
             Identifier resourceId = SpriteSource.TEXTURE_ID_CONVERTER.idToFile(contents.name());
             boolean auxRelevant = AuxiliaryTextures.isTrackedTexturePath(resourceId.getPath());
             // Upload every mip the atlas actually has, so mipmapped atlases (blocks, items) are complete
-            // rather than only sharp at level 0.
-            int levels = Math.min(mipLevels.length, Math.max(this.mipLevelCount, 1));
+            // rather than only sharp at level 0 -- but never past the native image's mip count (see
+            // radiance$nativeAtlasMipCount): MC's mipLevelCount can exceed the imported atlas's mips.
+            int levels = Math.min(mipLevels.length, Math.min(Math.max(this.mipLevelCount, 1),
+                atlasNativeMips));
             for (int level = 0; level < levels; level++) {
                 NativeImage image = mipLevels[level];
                 if (image == null) {
@@ -128,6 +132,25 @@ public abstract class TextureAtlasMixins {
     }
 
     /**
+     * Mip levels the imported Vulkan atlas image actually has. The backend image was created with a
+     * fixed mip count (recorded in the texture tracker at import), but MC's logical {@code
+     * TextureAtlas.mipLevelCount} can be larger: 26.2 generates the higher atlas mips on the GPU (a
+     * render-to-texture/blit the Vulkan backend never replays), so the native image holds fewer.
+     * Uploading a sprite to a mip level the native image doesn't have is an out-of-range {@code
+     * vkCmdCopyBufferToImage} that faults the device, so every upload is clamped to this count. Falls
+     * back to {@code mipLevelCount} only if the atlas isn't tracked yet (shouldn't happen -- the atlas
+     * GL id is imported before these hooks run).
+     */
+    @Unique
+    private int radiance$nativeAtlasMipCount(int atlasId) {
+        TextureTracker.Texture tracked = TextureTracker.GLID2Texture.get(atlasId);
+        if (tracked == null) {
+            return Math.max(this.mipLevelCount, 1);
+        }
+        return Math.max(tracked.maxLayer(), 1);
+    }
+
+    /**
      * Mirror each animated sprite's <em>current</em> frame into the Vulkan atlas every tick.
      *
      * <p>26.2 advances animations by rendering the current frame into the atlas via a render pass
@@ -150,6 +173,7 @@ public abstract class TextureAtlasMixins {
             return;
         }
         int atlasId = glTexture.glId();
+        int atlasNativeMips = radiance$nativeAtlasMipCount(atlasId);
 
         // Skip the sprite-map build on ticks where nothing advanced (e.g. an atlas with no active
         // animation): only proceed if at least one state is dirty.
@@ -209,7 +233,8 @@ public abstract class TextureAtlasMixins {
             int frameY = (gridIndex / rowSize) * frameHeight;
             int originX = sprite.getX() + padding;
             int originY = sprite.getY() + padding;
-            int levels = Math.min(mipLevels.length, Math.max(this.mipLevelCount, 1));
+            int levels = Math.min(mipLevels.length, Math.min(Math.max(this.mipLevelCount, 1),
+                atlasNativeMips));
             for (int level = 0; level < levels; level++) {
                 NativeImage image = mipLevels[level];
                 if (image == null) {
