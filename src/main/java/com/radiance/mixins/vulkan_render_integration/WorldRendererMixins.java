@@ -18,6 +18,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.RotatingSectionStorage;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.CloudRenderer;
+import net.minecraft.client.renderer.WeatherEffectRenderer;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.SectionOcclusionGraph;
@@ -99,6 +100,10 @@ public abstract class WorldRendererMixins {
     @Shadow
     @Final
     private CloudRenderer cloudRenderer;
+
+    @Shadow
+    @Final
+    private WeatherEffectRenderer weatherEffectRenderer;
 
     @Shadow
     public abstract ViewArea viewArea();
@@ -283,13 +288,16 @@ public abstract class WorldRendererMixins {
         // ===================== Block-breaking crumbling =====================
         EntityProxy.queueCrumblingRebuild(levelRenderState);
 
-        // ===================== Particles =====================
-        // 26.2: extract each particle group's quads (ParticleEngine.extract + QuadParticleRenderState
-        // .buildLayer) into the mod's PBRVertexConsumer and feed the native post-render particle pass.
-        // See EntityProxy.queueParticleRebuild. (Weather is still a no-op stub pending its own capture.)
+        // ===================== Particles + weather =====================
+        // 26.2: both are captured off their render states (ParticleEngine.extract /
+        // WeatherEffectRenderer.extractRenderState) into the mod's PBRVertexConsumer and injected as
+        // world-RT geometry -- the native post-render pass their vanilla path targets does not composite
+        // in 26.2. See EntityProxy.queueParticleRebuild / queueWeatherBuild.
         if (level != null) {
             EntityProxy.queueParticleRebuild(gameRenderer.mainCamera(), partialTick,
                 cameraState.cullFrustum);
+            EntityProxy.queueWeatherBuild(this.weatherEffectRenderer, level,
+                gameRenderer.mainCamera(), partialTick);
         }
 
         // ===================== Clouds (CloudRendererMixins intercepts render() for capture) =======

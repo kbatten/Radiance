@@ -41,7 +41,10 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.particle.SingleQuadParticle;
 import net.minecraft.client.renderer.WeatherEffectRenderer;
-import net.minecraft.client.renderer.WorldBorderRenderer;
+import net.minecraft.client.renderer.state.level.WeatherRenderState;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.phys.Vec3;
+import com.radiance.mixins.vulkan_render_integration.WeatherEffectRendererMixins;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.rendertype.PreparedRenderType;
 import net.minecraft.client.renderer.rendertype.RenderType;
@@ -562,20 +565,68 @@ public class EntityProxy {
     }
 
     /**
-     * 26.2 TODO: weather no longer renders through a {@code VertexConsumer} --
-     * {@code WeatherEffectRenderer.render(Vec3, WeatherRenderState)} tessellates rain/snow columns
-     * into a private {@code BufferBuilder}, uploads a GPU buffer and draws it to the weather render
-     * target. Capturing it needs either the column tessellation reimplemented into a
-     * {@link PBRVertexConsumer} (as the mod does for clouds) from {@code WeatherRenderState}'s public
-     * columns, or a hook on {@code WeatherEffectRenderer}. No-op until then.
+     * 26.2: weather (rain/snow) renders through {@link WeatherEffectRenderer} --
+     * {@code extractRenderState} collects the visible precipitation columns into a {@link
+     * WeatherRenderState}, then {@code render} tessellates them (camera-relative quads) into a private
+     * GPU buffer the Vulkan backend never sees. Capture it like particles: extract the render state,
+     * drive MC's own {@code renderInstances} tessellation (via {@link WeatherEffectRendererMixins}) into
+     * a {@link PBRVertexConsumer} per precipitation type, and inject the geometry through the world-RT
+     * path -- NOT the native post-render weather pass, whose output never composites in 26.2 (see
+     * {@link #queueParticleRebuild}). The columns are camera-relative, so an entity origin at the camera
+     * position makes the {@code WORLD} transform ({@code entityPos - cameraPos = 0}) leave them in place.
      */
-    public static void queueWeatherBuild(WeatherEffectRenderer weatherRendering,
-        WorldBorderRenderer worldBorderRendering,
-        ClientLevel world,
-        Camera camera,
-        int ticks,
-        float tickDelta) {
-        // no-op pending 26.2 weather-capture design (see javadoc)
+    public static void queueWeatherBuild(WeatherEffectRenderer weatherRendering, ClientLevel world,
+        Camera camera, float tickDelta) {
+        if (weatherRendering == null || world == null) {
+            return;
+        }
+
+        Vec3 camPos = camera.position();
+        WeatherRenderState weatherRenderState = new WeatherRenderState();
+        weatherRendering.extractRenderState(world, tickDelta, camPos, weatherRenderState);
+        if (weatherRenderState.rainColumns.isEmpty() && weatherRenderState.snowColumns.isEmpty()) {
+            return;
+        }
+
+        WeatherEffectRendererMixins tessellator = (WeatherEffectRendererMixins) weatherRendering;
+        List<StorageVertexConsumerProvider> storageVertexConsumerProviders = new ArrayList<>();
+        EntityRenderDataList entityRenderDataList = new EntityRenderDataList();
+
+        // Rain (full brightness) and snow (0.8 -- matches WeatherEffectRenderer.render's own factors).
+        radiance$captureWeather(tessellator, weatherRenderState.rainColumns,
+            "textures/environment/rain.png", 1.0f, weatherRenderState.radius,
+            weatherRenderState.intensity, camPos, "radiance$weather_rain".hashCode(),
+            storageVertexConsumerProviders, entityRenderDataList);
+        radiance$captureWeather(tessellator, weatherRenderState.snowColumns,
+            "textures/environment/snow.png", 0.8f, weatherRenderState.radius,
+            weatherRenderState.intensity, camPos, "radiance$weather_snow".hashCode(),
+            storageVertexConsumerProviders, entityRenderDataList);
+
+        queueBuild(storageVertexConsumerProviders, entityRenderDataList, 0.0f,
+            Constants.Coordinates.WORLD, false);
+    }
+
+    private static void radiance$captureWeather(WeatherEffectRendererMixins tessellator,
+        List<WeatherEffectRenderer.ColumnInstance> columns, String texturePath, float verticalOffset,
+        int radius, float intensity, Vec3 camPos, int hashCode,
+        List<StorageVertexConsumerProvider> storageVertexConsumerProviders,
+        EntityRenderDataList entityRenderDataList) {
+        if (columns.isEmpty()) {
+            return;
+        }
+        Identifier textureId = Identifier.withDefaultNamespace(texturePath);
+        // The mod cancels MC's own weather render, so nothing else loads the standalone precipitation
+        // texture -- touch it here so it is created + imported into the backend before its GL id is
+        // resolved by the render type.
+        Minecraft.getInstance().getTextureManager().getTexture(textureId);
+        RenderType renderType = RenderTypes.entityTranslucent(textureId);
+
+        StorageVertexConsumerProvider store = new StorageVertexConsumerProvider(0);
+        tessellator.radiance$renderInstances(store.getBuffer(renderType), columns, camPos,
+            verticalOffset, radius, intensity);
+        storageVertexConsumerProviders.add(store);
+        processWorldEntityRenderData(store, hashCode, camPos.x(), camPos.y(), camPos.z(),
+            Constants.RayTracingFlags.WORLD, false, entityRenderDataList);
     }
 
     public static void queueBuild(
