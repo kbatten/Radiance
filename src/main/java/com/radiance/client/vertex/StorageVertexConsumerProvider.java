@@ -5,6 +5,7 @@ import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.radiance.mixin_related.extensions.vulkan_render_integration.IRenderTypeExt;
 import java.util.HashMap;
 import java.util.Map;
 import net.fabricmc.api.EnvType;
@@ -71,8 +72,22 @@ public class StorageVertexConsumerProvider {
     /**
      * 26.2: RenderPhase is removed, so classify off the {@link RenderType}. {@code hasBlending()}
      * flags translucent; otherwise the pipeline location distinguishes cutout from solid.
+     *
+     * <p>Text render types carry a <b>post-text mode</b> (background / intensity / rgba, ± see-through
+     * / polygon-offset) rather than a plain alpha mode, and the RT text hit group ({@code text.rahit},
+     * selected by the render type name) reads exactly this value to pick the glyph-coverage channel:
+     * INTENSITY samples the font's {@code .r}, RGBA samples {@code .a}. Without this branch every text
+     * type fell through to {@code TRANSPARENT (2)} -- which the shader reads as INTENSITY -- so an
+     * RGBA font ({@code text}/{@code text_polygon_offset}, e.g. sign text) sampled {@code .r} (opaque
+     * everywhere) and the whole glyph cell rendered as a solid rectangle. The render type name is the
+     * authoritative mode (MC picks {@code text} vs {@code text_intensity} per font), so defer to it.
      */
     static int resolveAlphaMode(RenderType renderType) {
+        int textMode = PBRVertexConsumer.getPostTextMode(
+            ((IRenderTypeExt) renderType).radiance$getName());
+        if (textMode != PBRVertexConsumer.ALPHA_MODE_OPAQUE) {
+            return textMode;
+        }
         if (renderType.hasBlending()) {
             return PBRVertexConsumer.ALPHA_MODE_TRANSPARENT;
         }
