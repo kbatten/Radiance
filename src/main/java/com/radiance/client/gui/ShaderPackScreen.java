@@ -67,7 +67,7 @@ public class ShaderPackScreen extends Screen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
         super.extractRenderState(context, mouseX, mouseY, delta);
-        context.centeredText(font, Component.translatable(TITLE), this.width / 2, 16, 0xFFFFFF);
+        context.centeredText(font, Component.translatable(TITLE), this.width / 2, 16, 0xFFFFFFFF);
 
         Component hoveredTooltip = shaderPackList == null ? null : shaderPackList.getHoveredTooltip(mouseX, mouseY);
         if (hoveredTooltip != null) {
@@ -75,7 +75,7 @@ public class ShaderPackScreen extends Screen {
         }
 
         if (entries.isEmpty()) {
-            context.centeredText(font, Component.translatable(EMPTY), this.width / 2, LIST_TOP + 10, 0xB0B0B0);
+            context.centeredText(font, Component.translatable(EMPTY), this.width / 2, LIST_TOP + 10, 0xFFB0B0B0);
         }
     }
 
@@ -185,7 +185,7 @@ public class ShaderPackScreen extends Screen {
             @Override
             public void extractContent(GuiGraphicsExtractor context, int mouseX, int mouseY,
                 boolean hovered, float a) {
-                int textColor = Pipeline.isShaderPackSelectable(this.choice) ? 0xFFFFFF : 0x9A9A9A;
+                int textColor = Pipeline.isShaderPackSelectable(this.choice) ? 0xFFFFFFFF : 0xFF9A9A9A;
                 context.centeredText(
                     ShaderPackScreen.this.font,
                     ShaderPackScreen.this.buildLabel(this.choice),
