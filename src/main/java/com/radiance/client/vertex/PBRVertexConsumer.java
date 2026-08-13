@@ -281,6 +281,19 @@ public class PBRVertexConsumer implements VertexConsumer {
         return this;
     }
 
+    /**
+     * Overwrite the current vertex's albedo-emission channel after the vertex has begun. {@link
+     * #beginVertex} seeds this from {@link BlockEmissionContext}; this setter lets a caller derive
+     * emission from data that only arrives mid-vertex (e.g. a particle's block-light in {@code
+     * setLight}, which comes after {@code addVertex}). The RT reads it in {@code default.rchit} as
+     * self-glow ({@code radiance += tint * albedoEmission}). Must be called while a vertex is open.
+     */
+    public void setEmission(float emission) {
+        if (emission != 0.0F) {
+            MemoryUtil.memPutFloat(vertexPointer + PBRVertexFormats.OFF_ALBEDO_EMISSION, emission);
+        }
+    }
+
     private void putGlint(float u, float v) {
         putInt(vertexPointer + PBRVertexFormats.OFF_USE_GLINT, 1);
         long p = vertexPointer + PBRVertexFormats.OFF_GLINT_UV;

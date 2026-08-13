@@ -97,6 +97,25 @@ public class EntityProxy {
     private static final String NAME_TAG_DEFAULT_CONTENT = "/name_tag/default";
     private static final java.util.Set<String> LOGGED_POST_CONTENT_KEYS = ConcurrentHashMap.newKeySet();
 
+    // Self-glow for emissive particles (flame/lava/magma/torch): MC renders those at full block-light
+    // regardless of surroundings, the only per-particle signal that survives 26.2's atlas-layer batching.
+    // EmissiveParticleConsumer stamps an albedoEmission when a quad vertex's block-light is (near) max.
+    // Gain overridable via RADIANCE_PARTICLE_EMISSION_GAIN for tuning without a rebuild.
+    private static final int PARTICLE_EMISSION_LIGHT_THRESHOLD = 240; // full block-light = 15 << 4
+    private static final float PARTICLE_EMISSION_GAIN =
+        radiance$floatEnv("RADIANCE_PARTICLE_EMISSION_GAIN", 2.0f);
+
+    private static float radiance$floatEnv(String key, float defaultValue) {
+        String value = System.getenv(key);
+        if (value != null) {
+            try {
+                return Float.parseFloat(value);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return defaultValue;
+    }
+
     public static void processWorldEntityRenderData(
         StorageVertexConsumerProvider storageVertexConsumerProvider,
         int hashCode,
@@ -545,7 +564,13 @@ public class EntityProxy {
                 RenderType renderType = layer.translucent()
                     ? RenderTypes.entityTranslucent(layer.textureAtlasLocation())
                     : RenderTypes.entityCutout(layer.textureAtlasLocation());
-                quadGroup.buildLayer(layer, store.getBuffer(renderType));
+                // Give emissive particles self-glow: wrap the capture buffer so full-block-light quad
+                // vertices get an albedoEmission stamped (see EmissiveParticleConsumer).
+                VertexConsumer buffer = store.getBuffer(renderType);
+                if (buffer instanceof PBRVertexConsumer pbr) {
+                    buffer = new EmissiveParticleConsumer(pbr);
+                }
+                quadGroup.buildLayer(layer, buffer);
                 captured = true;
             }
 
@@ -562,6 +587,86 @@ public class EntityProxy {
 
         queueBuild(storageVertexConsumerProviders, entityRenderDataList, 0.0f,
             Constants.Coordinates.WORLD, false);
+    }
+
+    /**
+     * Wraps a particle layer's {@link PBRVertexConsumer} to give emissive particles self-glow. 26.2
+     * batches particles by atlas layer, so the only per-particle signal reaching {@code buildLayer} is
+     * the light -- and MC renders emissive particles (flame/lava/magma/torch) at full block-light
+     * regardless of surroundings. So on {@code setLight} (the last write per quad vertex), if the
+     * block-light is (near) max, stamp an {@code albedoEmission} on that vertex via {@link
+     * PBRVertexConsumer#setEmission}; the RT ({@code default.rchit}) then adds {@code tint *
+     * albedoEmission} as self-glow. Everything else just delegates to the underlying consumer.
+     *
+     * <p>Heuristic caveat: a non-emissive particle in a fully block-lit spot (smoke over a fire) also
+     * glows faintly; the max-light threshold keeps that rare.
+     */
+    private static final class EmissiveParticleConsumer implements VertexConsumer {
+
+        private final PBRVertexConsumer delegate;
+
+        EmissiveParticleConsumer(PBRVertexConsumer delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public VertexConsumer addVertex(float x, float y, float z) {
+            delegate.addVertex(x, y, z);
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setColor(int red, int green, int blue, int alpha) {
+            delegate.setColor(red, green, blue, alpha);
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setColor(int argb) {
+            delegate.setColor(argb);
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setUv(float u, float v) {
+            delegate.setUv(u, v);
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setUv1(int u, int v) {
+            delegate.setUv1(u, v);
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setUv2(int u, int v) {
+            delegate.setUv2(u, v);
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setNormal(float x, float y, float z) {
+            delegate.setNormal(x, y, z);
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setLineWidth(float width) {
+            delegate.setLineWidth(width);
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setLight(int packedLight) {
+            // Default VertexConsumer.setLight unpacks to setUv2(block, sky) on the delegate.
+            delegate.setLight(packedLight);
+            int blockLight = packedLight & 0xFFFF; // 0..240
+            if (blockLight >= PARTICLE_EMISSION_LIGHT_THRESHOLD) {
+                delegate.setEmission(PARTICLE_EMISSION_GAIN * (blockLight / 240.0f));
+            }
+            return this;
+        }
     }
 
     /**
