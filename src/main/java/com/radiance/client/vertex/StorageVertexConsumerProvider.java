@@ -110,7 +110,7 @@ public class StorageVertexConsumerProvider {
      * {@code prepare()} builds the prepared type; runtime-validate that calling it during capture
      * (outside a render pass) is acceptable.
      */
-    static int resolveTextureId(RenderType renderType) {
+    public static int resolveTextureId(RenderType renderType) {
         PreparedRenderType prepared = renderType.prepare();
         int fallback = 0;
         for (PreparedRenderType.Texture texture : prepared.textures()) {

@@ -12,6 +12,7 @@ import com.radiance.client.proxy.world.PlayerProxy;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IViewAreaExt;
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.Util;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -149,9 +150,19 @@ public abstract class WorldRendererMixins {
             0f, 1f, 0f, 0f,
             0f, 0f, -2f, 0f,
             0f, 0f, 1f, 1f).mul(cameraState.projectionMatrix);
-        // 26.2 TODO: RenderSystem.getTextureMatrix is gone (glint is a UBO now); identity is the
-        // safe best-effort until the glint matrix is re-sourced.
-        Matrix4f glintTextureMatrix = new Matrix4f();
+        // 26.2: RenderSystem.getTextureMatrix / RenderPhase.setupGlintTexturing are gone (glint's
+        // TextureMat moved into the per-draw dynamictransforms UBO). Reproduce MC's classic glint
+        // scroll matrix -- the exact value 1.21 fed here via setupGlintTexturing(0.16F) -- so the RT
+        // glint overlay (default.rchit: glintUV = worldUBO.textureMat * glintUV) scrolls/tiles like
+        // vanilla. glint.vsh is unchanged (texCoord0 = TextureMat * vec4(UV0,0,1)), so this still
+        // matches. translate(-x,y)*rotateZ(135deg)*scale(0.16); periods 110000/30000 ms, time*8.
+        long glintScroll = (long) (Util.getMillis() * 8L);
+        float glintScrollX = (float) (glintScroll % 110000L) / 110000.0F;
+        float glintScrollY = (float) (glintScroll % 30000L) / 30000.0F;
+        Matrix4f glintTextureMatrix = new Matrix4f()
+            .translation(-glintScrollX, glintScrollY, 0.0F)
+            .rotateZ(2.3561945F)
+            .scale(0.16F);
 
         // Classic ShaderGameTime fraction (RenderSystem.setShaderGameTime is gone in 26.2).
         float gameTime = ((float) (levelRenderState.gameTime % 24000L) + partialTick) / 24000.0F;
