@@ -1,5 +1,6 @@
 package com.radiance.mixins.vulkan_render_integration;
 
+import com.radiance.client.texture.EmissiveBlockColor;
 import com.radiance.client.vertex.BlockEmissionContext;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IBlockColorsExt;
 import net.minecraft.client.color.block.BlockColors;
@@ -62,7 +63,14 @@ public abstract class BlockModelRendererMixins {
                 emission = lightLevel / 15.0F;
             }
         }
-        BlockEmissionContext.set(emission);
+        if (emission > 0.0F) {
+            // Give the synthesized area light the block's own texture hue (warm torch, red redstone,
+            // cool soul torch) instead of a flat white glow. From the quad's sprite, cached.
+            float[] color = EmissiveBlockColor.of(quad.materialInfo().sprite());
+            BlockEmissionContext.set(emission, color[0], color[1], color[2]);
+        } else {
+            BlockEmissionContext.set(0.0F);
+        }
     }
 
     @Inject(method = "putQuadWithTint(Lnet/minecraft/client/renderer/block/BlockQuadOutput;FFF"

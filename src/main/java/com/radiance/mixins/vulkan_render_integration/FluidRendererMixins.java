@@ -1,6 +1,7 @@
 package com.radiance.mixins.vulkan_render_integration;
 
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.radiance.client.texture.EmissiveBlockColor;
 import com.radiance.client.vertex.BlockEmissionContext;
 import net.minecraft.client.renderer.block.BlockAndTintGetter;
 import net.minecraft.client.renderer.block.FluidModel;
@@ -151,7 +152,14 @@ public abstract class FluidRendererMixins {
             // for every fluid vertex below, and native buildLightInfos synthesizes a whole-quad area
             // light from it when no LabPBR emission cell covers the quad. Cleared before the method
             // returns so following geometry never inherits it. Water (level 0) is left untouched.
-            BlockEmissionContext.set(blockState.getLightEmission() / 15.0F);
+            float fluidEmission = blockState.getLightEmission() / 15.0F;
+            if (fluidEmission > 0.0F) {
+                // Lava's warm hue for its area light (from the still sprite), not a flat white glow.
+                float[] color = EmissiveBlockColor.of(model.stillMaterial().sprite());
+                BlockEmissionContext.set(fluidEmission, color[0], color[1], color[2]);
+            } else {
+                BlockEmissionContext.set(fluidEmission);
+            }
             int tintColor = model.tintSource() != null
                 ? model.tintSource().colorInWorld(blockState, level, pos)
                 : -1;

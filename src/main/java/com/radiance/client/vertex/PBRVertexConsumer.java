@@ -81,9 +81,9 @@ public class PBRVertexConsumer implements VertexConsumer {
         this.textureID = textureID;
         this.alphaMode = alphaMode;
 
-        if (this.vertexSizeByte != 128) {
+        if (this.vertexSizeByte != 144) {
             throw new IllegalStateException(
-                "PBR vertex stride must be 128, got " + this.vertexSizeByte);
+                "PBR vertex stride must be 144, got " + this.vertexSizeByte);
         }
     }
 
@@ -198,12 +198,17 @@ public class PBRVertexConsumer implements VertexConsumer {
         }
         this.currentVertexGlint = glintTextureID == 0 && glint != 0;
 
-        // 26.2 PBR emission: block-model quads stash their emission on a thread-local while their
-        // vertices are written (see BlockModelRendererMixins). memSet already zeroed the channel, so
-        // only write when emissive.
-        float emission = BlockEmissionContext.get();
-        if (emission != 0.0F) {
-            MemoryUtil.memPutFloat(ptr + PBRVertexFormats.OFF_ALBEDO_EMISSION, emission);
+        // 26.2 PBR emission: block-model/fluid quads stash their emission (strength + light color) on a
+        // thread-local while their vertices are written (see BlockModelRendererMixins/FluidRendererMixins).
+        // memSet already zeroed both channels, so only write when emissive. The color (0 = unset) tints
+        // the vanilla area light in native buildLightInfos so emitters glow in their own hue.
+        float[] emissionState = BlockEmissionContext.raw();
+        if (emissionState[0] != 0.0F) {
+            MemoryUtil.memPutFloat(ptr + PBRVertexFormats.OFF_ALBEDO_EMISSION, emissionState[0]);
+            long emissionColorPtr = ptr + PBRVertexFormats.OFF_EMISSION_COLOR;
+            MemoryUtil.memPutFloat(emissionColorPtr, emissionState[1]);
+            MemoryUtil.memPutFloat(emissionColorPtr + 4L, emissionState[2]);
+            MemoryUtil.memPutFloat(emissionColorPtr + 8L, emissionState[3]);
         }
 
         return ptr;

@@ -1,6 +1,7 @@
 package com.radiance.client.vertex;
 
 import static com.radiance.client.vertex.PBRVertexFormatElements.PBR_COLOR_LAYER;
+import static com.radiance.client.vertex.PBRVertexFormatElements.PBR_EMISSION_COLOR;
 import static com.radiance.client.vertex.PBRVertexFormatElements.PBR_GLINT_UV;
 import static com.radiance.client.vertex.PBRVertexFormatElements.PBR_LIGHT_UV;
 import static com.radiance.client.vertex.PBRVertexFormatElements.PBR_NORM;
@@ -63,6 +64,12 @@ public class PBRVertexFormats {
             .addAttribute("PostBase", PBR_POST_BASE)
 
             .addAttribute("Padding", GpuFormat.R32_FLOAT)
+
+            // Emissive-block light color (rgb; .a unused). Build-time only -- native buildLightInfos
+            // tints the vanilla area light with it; never packed into the GPU MaterialVertex. This is
+            // the 16th attribute (the 26.2 VertexFormat cap), so no further attributes can be added
+            // without merging another pair.
+            .addAttribute("EmissionColor", PBR_EMISSION_COLOR)
             .build();
 
     // 26.2: Yarn's VertexFormatElement carried a numeric id used to index
@@ -105,22 +112,24 @@ public class PBRVertexFormats {
     /** Offset of the Coordinate uint, which shares its attribute with AlbedoEmission. */
     public static final int OFF_COORDINATE = off("CoordinateAlbedoEmission");
 
+    public static final int OFF_EMISSION_COLOR = off("EmissionColor");
+
     // The native backend reads this struct with a hand-written Vulkan vertex-input layout, so a
     // silent change in size or field placement would corrupt geometry rather than fail loudly.
     // Pin both here: the attribute merges above are only safe because they preserve them exactly.
     static {
-        if (STRIDE != 128) {
+        if (STRIDE != 144) {
             throw new IllegalStateException(
-                "PBR vertex stride changed: expected 128, got " + STRIDE);
+                "PBR vertex stride changed: expected 144, got " + STRIDE);
         }
         int[] expected = {
-            0, 12, 16, 28, 32, 48, 52, 56, 64, 72, 76, 80, 88, 92, 96, 104, 108, 112,
+            0, 12, 16, 28, 32, 48, 52, 56, 64, 72, 76, 80, 88, 92, 96, 104, 108, 112, 128,
         };
         int[] actual = {
             OFF_POS, OFF_USE_NORM, OFF_NORM, OFF_USE_COLOR_LAYER, OFF_COLOR_LAYER,
             OFF_USE_TEXTURE, OFF_USE_OVERLAY, OFF_TEXTURE_UV, OFF_OVERLAY_UV, OFF_USE_GLINT,
             OFF_TEXTURE_ID, OFF_GLINT_UV, OFF_GLINT_TEXTURE, OFF_USE_LIGHT, OFF_LIGHT_UV,
-            OFF_COORDINATE, OFF_ALBEDO_EMISSION, OFF_POST_BASE,
+            OFF_COORDINATE, OFF_ALBEDO_EMISSION, OFF_POST_BASE, OFF_EMISSION_COLOR,
         };
         for (int i = 0; i < expected.length; i++) {
             if (expected[i] != actual[i]) {

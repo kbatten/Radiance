@@ -31,4 +31,5 @@ public class PBRVertexFormatElements {
     public static final GpuFormat PBR_COORDINATE = GpuFormat.R32_UINT;        // UINT x1
     public static final GpuFormat PBR_POST_BASE = GpuFormat.RGB32_FLOAT;      // FLOAT x3
     public static final GpuFormat PBR_ALBEDO_EMISSION = GpuFormat.R32_UINT;   // UINT x1
+    public static final GpuFormat PBR_EMISSION_COLOR = GpuFormat.RGBA32_FLOAT; // FLOAT x4
 }
