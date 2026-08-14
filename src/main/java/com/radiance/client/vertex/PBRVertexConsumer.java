@@ -69,6 +69,9 @@ public class PBRVertexConsumer implements VertexConsumer {
     private float baseX = 0;
     private float baseY = 0;
     private float baseZ = 0;
+    // Set per-vertex in beginVertex when the enchantment-glint thread-local is active; setUv reads it
+    // to stamp glintUV + the useGlint flag onto the item's own vertices (see GlintContext).
+    private boolean currentVertexGlint = false;
 
     public PBRVertexConsumer(ByteBufferBuilder allocator, int textureID, int alphaMode) {
         this.allocator = allocator;
@@ -185,9 +188,15 @@ public class PBRVertexConsumer implements VertexConsumer {
         // Reuse the trailing padding word after postBase for alpha mode.
         putInt(offBase + 12L, this.alphaMode);
 
-        if (glintTextureID != 0) {
-            putInt(ptr + PBRVertexFormats.OFF_GLINT_TEXTURE, glintTextureID);
+        // Enchantment glint: an explicit id (legacy GLint/GLintOverlay wrappers) wins; otherwise fall
+        // back to the thread-local GlintContext set around an enchanted item's main pass. Only the
+        // thread-local path auto-stamps glintUV in setUv -- the wrappers derive/putGlint themselves
+        // (GLintOverlay from position, not the raw UV), so they must not be double-stamped.
+        int glint = glintTextureID != 0 ? glintTextureID : GlintContext.get();
+        if (glint != 0) {
+            putInt(ptr + PBRVertexFormats.OFF_GLINT_TEXTURE, glint);
         }
+        this.currentVertexGlint = glintTextureID == 0 && glint != 0;
 
         // 26.2 PBR emission: block-model quads stash their emission on a thread-local while their
         // vertices are written (see BlockModelRendererMixins). memSet already zeroed the channel, so
@@ -250,6 +259,11 @@ public class PBRVertexConsumer implements VertexConsumer {
         long p = vertexPointer + PBRVertexFormats.OFF_TEXTURE_UV;
         MemoryUtil.memPutFloat(p, u);
         MemoryUtil.memPutFloat(p + 4L, v);
+        if (this.currentVertexGlint) {
+            // Enchanted item (GlintContext active): glintUV = the item's own UV0, matching vanilla
+            // glint.vsh (texCoord0 = TextureMat * vec4(UV0,0,1)); worldUBO.textureMat scrolls it.
+            putGlint(u, v);
+        }
         return this;
     }
 
