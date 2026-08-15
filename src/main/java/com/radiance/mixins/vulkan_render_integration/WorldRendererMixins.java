@@ -103,6 +103,10 @@ public abstract class WorldRendererMixins {
     @Unique
     private static final float RADIANCE_HANDHELD_LIGHT_GAIN = 60.0F;
 
+    // [PROBE #23] Throttle for the once-per-second handheld-light value log. Temporary.
+    @Unique
+    private long radiance$lastHandheldProbeMs = 0L;
+
     @Shadow
     @Final
     private CloudRenderer cloudRenderer;
@@ -281,6 +285,20 @@ public abstract class WorldRendererMixins {
                 // eases to 0 at this cap).
                 radiance$dynamicLights[7] = radiance$level * 2.5F;
                 radiance$dynamicLightCount = 1;
+
+                // [PROBE #23] Log the actual values sent to the shader (once/sec) so we can confirm the
+                // range/intensity are what we think. Gated by RADIANCE_PROBE_HANDHELD; strip after.
+                if (System.getenv("RADIANCE_PROBE_HANDHELD") != null) {
+                    long radiance$nowMs = System.currentTimeMillis();
+                    if (radiance$nowMs - radiance$lastHandheldProbeMs > 1000L) {
+                        radiance$lastHandheldProbeMs = radiance$nowMs;
+                        System.out.println("[HandheldProbe] level=" + radiance$level
+                            + " intensity=" + radiance$intensity + " range=" + radiance$dynamicLights[7]
+                            + " gain=" + RADIANCE_HANDHELD_LIGHT_GAIN
+                            + " posRel=(" + radiance$dynamicLights[0] + "," + radiance$dynamicLights[1]
+                            + "," + radiance$dynamicLights[2] + ")");
+                    }
+                }
             }
         }
 
