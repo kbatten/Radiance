@@ -95,12 +95,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class WorldRendererMixins {
 
     // Radiance scale for a handheld light at full block level (15): intensity = (level/15)^2 * gain,
-    // then inverse-square falloff in native. 10 read very faint (a torch barely lit its surroundings),
-    // so bumped to 30 (~3x). Compile-time constant (inlined -> no mixin <clinit>, safe per the
-    // static-final gotcha). Tune to taste; if still faint at high gain the lever is the native
-    // falloff/range in sampleSurfaceDynamicPointLights, not this scale.
+    // times the native linear-radius falloff (1 - d/R)^2. For reference VPT_SUN_RADIANCE = 8, so this
+    // is ~this-many-x the sun near the source. The linear falloff maxes at 1 near the source (vs the
+    // old inverse-square's ~4x near floor), so it needs a higher gain to feel bright up close: 10 -> 30
+    // (still read dim) -> 60. Compile-time constant (inlined -> no mixin <clinit>, safe per the
+    // static-final gotcha). Tune to taste.
     @Unique
-    private static final float RADIANCE_HANDHELD_LIGHT_GAIN = 30.0F;
+    private static final float RADIANCE_HANDHELD_LIGHT_GAIN = 60.0F;
 
     @Shadow
     @Final
