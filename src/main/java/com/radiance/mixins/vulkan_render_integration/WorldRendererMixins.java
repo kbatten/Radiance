@@ -257,7 +257,9 @@ public abstract class WorldRendererMixins {
                 radiance$dynamicLights[4] = 1.0F;  // warm torch tint (linear RGB)
                 radiance$dynamicLights[5] = 0.8F;
                 radiance$dynamicLights[6] = 0.5F;
-                radiance$dynamicLights[7] = radiance$level; // reach in blocks (vanilla light spread)
+                // Reach in blocks. Vanilla light spreads ~level blocks; extend it 1.5x so a carried
+                // torch lights a generous room (the native falloff is now linear to this range).
+                radiance$dynamicLights[7] = radiance$level * 1.5F;
                 radiance$dynamicLightCount = 1;
             }
         }
