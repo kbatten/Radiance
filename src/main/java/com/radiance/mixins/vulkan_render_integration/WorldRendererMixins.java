@@ -34,6 +34,7 @@ import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.SectionUpdateRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.client.renderer.texture.TextureManager;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
@@ -42,6 +43,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
@@ -248,6 +250,22 @@ public abstract class WorldRendererMixins {
             if (radiance$level > 0) {
                 // Sit the light a little below the eye, like a torch held low.
                 Vec3 radiance$lightPos = radiance$player.getEyePosition(partialTick).subtract(0.0, 0.4, 0.0);
+                // [PROBE #24] The handheld light goes out when facing into a wall. Test the "source is in
+                // the block" hypothesis: log the light's world cell exactly when it lands in a non-air
+                // block -- that should coincide with the cutout if the source embeds in geometry. If the
+                // log stays SILENT during a cutout, the source is NOT in a block and the cause is the
+                // shader shadow ray / NoL instead. Gated by env RADIANCE_PROBE_HANDHELD; strip after #24.
+                if (level != null && System.getenv("RADIANCE_PROBE_HANDHELD") != null) {
+                    BlockPos radiance$probeCell = BlockPos.containing(radiance$lightPos);
+                    BlockState radiance$probeState = level.getBlockState(radiance$probeCell);
+                    if (!radiance$probeState.isAir()) {
+                        System.out.println("[HandheldProbe] source-in-block: block="
+                            + radiance$probeState.getBlock() + " cell=" + radiance$probeCell
+                            + " lightPos=" + radiance$lightPos + " cam=" + cameraState.pos
+                            + " eye=" + radiance$player.getEyePosition(partialTick)
+                            + " fullCollision=" + radiance$probeState.isCollisionShapeFullBlock(level, radiance$probeCell));
+                    }
+                }
                 float radiance$t = radiance$level / 15.0F;
                 float radiance$intensity = radiance$t * radiance$t * RADIANCE_HANDHELD_LIGHT_GAIN;
                 radiance$dynamicLights[0] = (float) (radiance$lightPos.x - cameraState.pos.x);
