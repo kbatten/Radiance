@@ -179,12 +179,18 @@ public abstract class WorldRendererMixins {
         // levelLightmap() exposes the level lightmap GpuTextureView directly (no ILightMapManagerExt).
         int lightMapTextureID = radiance$resolveGlId(gameRenderer.levelLightmap());
 
+        // Monotonic seconds clock for the handheld-light flame flicker (worldUBO.flickerTime).
+        // gameTime above is a day fraction that wraps every 24000 ticks -- unusable as a flicker
+        // clock -- so use a real wall clock here. Wrap hourly to keep float precision; the once-an-hour
+        // phase jump is a single imperceptible frame.
+        float flickerTime = (float) ((System.nanoTime() / 1_000_000L) % 3_600_000L) / 1000.0F;
+
         BufferProxy.updateWorldUniform(viewMatrix, effectedViewMatrix, projectionMatrix,
             glintTextureMatrix, gameTime, overlayTextureID, firstPerson,
             fogData.renderDistanceStart, fogData.renderDistanceEnd,
             fogColor.x(), fogColor.y(), fogColor.z(), fogColor.w(),
             0 /* fogShape: SPHERE (FogData no longer carries a shape) TODO */, skyType,
-            endSkyTextureID, endPortalTextureID, lightMapTextureID);
+            endSkyTextureID, endPortalTextureID, lightMapTextureID, flickerTime);
 
         // ===================== Sky uniform =====================
         int baseColor = skyRenderState.skyColor;

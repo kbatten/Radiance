@@ -123,7 +123,7 @@ public class BufferProxy {
         Matrix4f projectionMatrix, Matrix4f glintTextureMatrix, float gameTime,
         int overlayTextureID, boolean firstPerson, float fogStart, float fogEnd, float fogRed,
         float fogGreen, float fogBlue, float fogAlpha, int fogShape, int skyType,
-        int endSkyTextureID, int endPortalTextureID, int lightMapTextureID) {
+        int endSkyTextureID, int endPortalTextureID, int lightMapTextureID, float flickerTime) {
         try (MemoryStack stack = stackPush()) {
             int size = 592;
             ByteBuffer bb = stack.malloc(size);
@@ -194,6 +194,7 @@ public class BufferProxy {
             baseAddr += Integer.BYTES;
             bb.putInt(baseAddr, lightMapTextureID);
             baseAddr += Integer.BYTES;
+            bb.putFloat(baseAddr, flickerTime); // was pad4 -- monotonic clock for handheld flame flicker
             baseAddr += Integer.BYTES;
 
             updateWorldUniform(addr);
