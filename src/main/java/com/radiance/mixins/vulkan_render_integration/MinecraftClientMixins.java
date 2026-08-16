@@ -137,7 +137,17 @@ public class MinecraftClientMixins {
         Options.overwriteConfig();
     }
 
-    @Inject(method = "close()V", at = @At(value = "TAIL"))
+    // Tear down the native Vulkan renderer right BEFORE MC destroys its GLFW window -- not at TAIL.
+    // Minecraft.close() frees its own resources first (TextureManager.close() -> our NativeImage frees,
+    // which need the device alive), then near the end calls window.close() (glfwDestroyWindow) and
+    // glfwTerminate(). Our vk::Window destructor does vkDestroySurfaceKHR on the surface created from
+    // that HWND, and the swapchain is bound to it; destroying them after the window/HWND is gone (and
+    // GLFW terminated) crashes the Windows/NVIDIA WSI on every exit. Injecting before Window.close()
+    // means: device still valid (textures already freed), window/HWND still valid -> clean teardown.
+    // (Was @At TAIL == after window.close() + glfwTerminate() -> the shutdown-order exit crash.)
+    @Inject(method = "close()V",
+        at = @At(value = "INVOKE",
+            target = "Lcom/mojang/blaze3d/platform/Window;close()V"))
     public void closeRenderer(CallbackInfo ci) {
         RendererProxy.close();
     }
