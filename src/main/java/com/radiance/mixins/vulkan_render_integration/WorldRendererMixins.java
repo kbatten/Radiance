@@ -34,7 +34,6 @@ import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.SectionUpdateRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.client.renderer.texture.TextureManager;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
@@ -43,7 +42,6 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
@@ -102,10 +100,6 @@ public abstract class WorldRendererMixins {
     // static-final gotcha). Tune to taste.
     @Unique
     private static final float RADIANCE_HANDHELD_LIGHT_GAIN = 60.0F;
-
-    // [PROBE #23] Throttle for the once-per-second handheld-light value log. Temporary.
-    @Unique
-    private long radiance$lastHandheldProbeMs = 0L;
 
     @Shadow
     @Final
@@ -255,22 +249,6 @@ public abstract class WorldRendererMixins {
             if (radiance$level > 0) {
                 // Sit the light a little below the eye, like a torch held low.
                 Vec3 radiance$lightPos = radiance$player.getEyePosition(partialTick).subtract(0.0, 0.4, 0.0);
-                // [PROBE #24] The handheld light goes out when facing into a wall. Test the "source is in
-                // the block" hypothesis: log the light's world cell exactly when it lands in a non-air
-                // block -- that should coincide with the cutout if the source embeds in geometry. If the
-                // log stays SILENT during a cutout, the source is NOT in a block and the cause is the
-                // shader shadow ray / NoL instead. Gated by env RADIANCE_PROBE_HANDHELD; strip after #24.
-                if (level != null && System.getenv("RADIANCE_PROBE_HANDHELD") != null) {
-                    BlockPos radiance$probeCell = BlockPos.containing(radiance$lightPos);
-                    BlockState radiance$probeState = level.getBlockState(radiance$probeCell);
-                    if (!radiance$probeState.isAir()) {
-                        System.out.println("[HandheldProbe] source-in-block: block="
-                            + radiance$probeState.getBlock() + " cell=" + radiance$probeCell
-                            + " lightPos=" + radiance$lightPos + " cam=" + cameraState.pos
-                            + " eye=" + radiance$player.getEyePosition(partialTick)
-                            + " fullCollision=" + radiance$probeState.isCollisionShapeFullBlock(level, radiance$probeCell));
-                    }
-                }
                 float radiance$t = radiance$level / 15.0F;
                 float radiance$intensity = radiance$t * radiance$t * RADIANCE_HANDHELD_LIGHT_GAIN;
                 radiance$dynamicLights[0] = (float) (radiance$lightPos.x - cameraState.pos.x);
@@ -285,20 +263,6 @@ public abstract class WorldRendererMixins {
                 // eases to 0 at this cap).
                 radiance$dynamicLights[7] = radiance$level * 2.5F;
                 radiance$dynamicLightCount = 1;
-
-                // [PROBE #23] Log the actual values sent to the shader (once/sec) so we can confirm the
-                // range/intensity are what we think. Gated by RADIANCE_PROBE_HANDHELD; strip after.
-                if (System.getenv("RADIANCE_PROBE_HANDHELD") != null) {
-                    long radiance$nowMs = System.currentTimeMillis();
-                    if (radiance$nowMs - radiance$lastHandheldProbeMs > 1000L) {
-                        radiance$lastHandheldProbeMs = radiance$nowMs;
-                        System.out.println("[HandheldProbe] level=" + radiance$level
-                            + " intensity=" + radiance$intensity + " range=" + radiance$dynamicLights[7]
-                            + " gain=" + RADIANCE_HANDHELD_LIGHT_GAIN
-                            + " posRel=(" + radiance$dynamicLights[0] + "," + radiance$dynamicLights[1]
-                            + "," + radiance$dynamicLights[2] + ")");
-                    }
-                }
             }
         }
 
