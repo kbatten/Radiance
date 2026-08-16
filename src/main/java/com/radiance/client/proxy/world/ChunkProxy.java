@@ -78,6 +78,10 @@ public class ChunkProxy {
         Executors.newFixedThreadPool(numImportantChunkRebuildThreads, r -> {
             Thread thread = new Thread(r);
             thread.setPriority(Thread.NORM_PRIORITY);
+            // Daemon so idle chunk-rebuild workers never block JVM exit. Otherwise these
+            // non-daemon pool threads keep the VM alive at shutdown and MC 26.2's
+            // ClientShutdownWatchdog force-crashes ("Client shutdown from post-main").
+            thread.setDaemon(true);
             return thread;
         });
     private static final ThreadLocal<SectionBufferBuilderPack>
@@ -88,6 +92,10 @@ public class ChunkProxy {
         numNormalChunkRebuildThreads, r -> {
             Thread thread = new Thread(r);
             thread.setPriority(Thread.NORM_PRIORITY);
+            // Daemon so idle chunk-rebuild workers never block JVM exit. Otherwise these
+            // non-daemon pool threads keep the VM alive at shutdown and MC 26.2's
+            // ClientShutdownWatchdog force-crashes ("Client shutdown from post-main").
+            thread.setDaemon(true);
             return thread;
         });
 
@@ -156,6 +164,7 @@ public class ChunkProxy {
             r -> {
                 Thread thread = new Thread(r);
                 thread.setPriority(Thread.NORM_PRIORITY);
+                thread.setDaemon(true); // see the ctor pool: daemon so shutdown can't hang on it
                 return thread;
             });
 
