@@ -9,6 +9,7 @@ import com.radiance.client.proxy.vulkan.BufferProxy;
 import com.radiance.client.proxy.world.ChunkProxy;
 import com.radiance.client.proxy.world.EntityProxy;
 import com.radiance.client.proxy.world.PlayerProxy;
+import com.radiance.client.texture.EmissiveBlockColor;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.IViewAreaExt;
 import java.util.ArrayList;
 import java.util.List;
@@ -93,13 +94,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class WorldRendererMixins {
 
     // Radiance scale for a handheld light at full block level (15): intensity = (level/15)^2 * gain,
-    // times the native linear-radius falloff (1 - d/R)^2. For reference VPT_SUN_RADIANCE = 8, so this
-    // is ~this-many-x the sun near the source. The linear falloff maxes at 1 near the source (vs the
-    // old inverse-square's ~4x near floor), so it needs a higher gain to feel bright up close: 10 -> 30
-    // (still read dim) -> 60. Compile-time constant (inlined -> no mixin <clinit>, safe per the
-    // static-final gotcha). Tune to taste.
+    // times the native falloff (1 - (d/R)^4). For reference VPT_SUN_RADIANCE = 8. gain 60 (tuned blind
+    // while the wrong shader pack was active) was WAY too bright once it actually applied under both
+    // packs, so cut to 10 (a torch reads ~sun-ish, spread over its range). Compile-time constant
+    // (inlined -> no mixin <clinit>, safe per the static-final gotcha). Tune to taste.
     @Unique
-    private static final float RADIANCE_HANDHELD_LIGHT_GAIN = 60.0F;
+    private static final float RADIANCE_HANDHELD_LIGHT_GAIN = 10.0F;
 
     @Shadow
     @Final
@@ -244,20 +244,29 @@ public abstract class WorldRendererMixins {
         float[] radiance$dynamicLights = new float[BufferProxy.MAX_DYNAMIC_LIGHTS * 8];
         Player radiance$player = client.player;
         if (radiance$player != null) {
-            int radiance$level = Math.max(radiance$heldLightLevel(radiance$player.getMainHandItem()),
-                radiance$heldLightLevel(radiance$player.getOffhandItem()));
+            ItemStack radiance$mainItem = radiance$player.getMainHandItem();
+            ItemStack radiance$offItem = radiance$player.getOffhandItem();
+            int radiance$mainLevel = radiance$heldLightLevel(radiance$mainItem);
+            int radiance$offLevel = radiance$heldLightLevel(radiance$offItem);
+            int radiance$level = Math.max(radiance$mainLevel, radiance$offLevel);
             if (radiance$level > 0) {
                 // Sit the light a little below the eye, like a torch held low.
                 Vec3 radiance$lightPos = radiance$player.getEyePosition(partialTick).subtract(0.0, 0.4, 0.0);
                 float radiance$t = radiance$level / 15.0F;
                 float radiance$intensity = radiance$t * radiance$t * RADIANCE_HANDHELD_LIGHT_GAIN;
+                // Match a PLACED torch's color: the light item's block emissive hue, from the same
+                // EmissiveBlockColor the chunk area lights use (cached as blocks render; warm until then).
+                ItemStack radiance$lightItem = radiance$mainLevel >= radiance$offLevel
+                    ? radiance$mainItem : radiance$offItem;
+                float[] radiance$color =
+                    EmissiveBlockColor.ofBlockOrWarm(Block.byItem(radiance$lightItem.getItem()));
                 radiance$dynamicLights[0] = (float) (radiance$lightPos.x - cameraState.pos.x);
                 radiance$dynamicLights[1] = (float) (radiance$lightPos.y - cameraState.pos.y);
                 radiance$dynamicLights[2] = (float) (radiance$lightPos.z - cameraState.pos.z);
                 radiance$dynamicLights[3] = radiance$intensity;
-                radiance$dynamicLights[4] = 1.0F;  // warm torch tint (linear RGB)
-                radiance$dynamicLights[5] = 0.8F;
-                radiance$dynamicLights[6] = 0.5F;
+                radiance$dynamicLights[4] = radiance$color[0];
+                radiance$dynamicLights[5] = radiance$color[1];
+                radiance$dynamicLights[6] = radiance$color[2];
                 // Reach in blocks. Vanilla light spreads ~level blocks; extend it 2.5x so a carried
                 // torch lights a generous room (the native falloff stays ~full through the room then
                 // eases to 0 at this cap).

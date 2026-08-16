@@ -68,6 +68,8 @@ public abstract class BlockModelRendererMixins {
             // cool soul torch) instead of a flat white glow. From the quad's sprite, cached.
             float[] color = EmissiveBlockColor.of(quad.materialInfo().sprite());
             BlockEmissionContext.set(emission, color[0], color[1], color[2]);
+            // Cache it per block so the handheld light (#23) can match a placed torch's color.
+            EmissiveBlockColor.recordBlock(state.getBlock(), color);
         } else {
             BlockEmissionContext.set(0.0F);
         }
