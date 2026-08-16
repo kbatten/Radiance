@@ -38,7 +38,8 @@ how each feature worked in 1.21.x.
 
 ## Stability (slot in whenever it annoys)
 
-- 🔧 **Clean exit** — TWO-part fix applied, awaiting confirm (2026-08-16). **Part 1 (native surface
+- ✅ **Clean exit** — TWO-part fix, **user-confirmed RESOLVED (2026-08-16)** — quits cleanly, no crash
+  report. **Part 1 (native surface
   segfault):** native teardown (`RendererProxy.close()`) was injected at `Minecraft.close()V` **TAIL**,
   but MC destroys its GLFW window (`window.close()` → `glfwDestroyWindow`) and calls `glfwTerminate()`
   earlier in `close()` (javap: TextureManager.close@84 → RenderSystem.shutdownRenderer@128 →
