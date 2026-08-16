@@ -93,14 +93,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(LevelRenderer.class)
 public abstract class WorldRendererMixins {
 
-    // Radiance scale for a handheld light at full block level (15): intensity = (level/15)^2 * gain,
-    // times the native falloff (1 - (d/R)^4). For reference VPT_SUN_RADIANCE = 8. gain 60 (tuned blind
-    // while the wrong shader pack was active) was WAY too bright once it actually applied under both
-    // packs; 60 -> 10 -> 5 (user). Compile-time constant (inlined -> no mixin <clinit>, safe per the
-    // static-final gotcha). Tune to taste.
-    @Unique
-    private static final float RADIANCE_HANDHELD_LIGHT_GAIN = 5.0F;
-
     @Shadow
     @Final
     private CloudRenderer cloudRenderer;
@@ -252,10 +244,12 @@ public abstract class WorldRendererMixins {
             if (radiance$level > 0) {
                 // Sit the light a little below the eye, like a torch held low.
                 Vec3 radiance$lightPos = radiance$player.getEyePosition(partialTick).subtract(0.0, 0.4, 0.0);
+                // Send the BASE light; the shader pack's config scales it (handheld_light_gain on the
+                // intensity, handheld_light_range on the range cap). intensity = (level/15)^2, range =
+                // level blocks. Both packs read the same pack-agnostic SkyUBO values.
                 float radiance$t = radiance$level / 15.0F;
-                float radiance$intensity = radiance$t * radiance$t * RADIANCE_HANDHELD_LIGHT_GAIN;
                 // Match a PLACED torch's color: the light item's block emissive hue, from the same
-                // EmissiveBlockColor the chunk area lights use (cached as blocks render; warm until then).
+                // EmissiveBlockColor the chunk area lights use.
                 ItemStack radiance$lightItem = radiance$mainLevel >= radiance$offLevel
                     ? radiance$mainItem : radiance$offItem;
                 float[] radiance$color =
@@ -263,15 +257,11 @@ public abstract class WorldRendererMixins {
                 radiance$dynamicLights[0] = (float) (radiance$lightPos.x - cameraState.pos.x);
                 radiance$dynamicLights[1] = (float) (radiance$lightPos.y - cameraState.pos.y);
                 radiance$dynamicLights[2] = (float) (radiance$lightPos.z - cameraState.pos.z);
-                radiance$dynamicLights[3] = radiance$intensity;
+                radiance$dynamicLights[3] = radiance$t * radiance$t;
                 radiance$dynamicLights[4] = radiance$color[0];
                 radiance$dynamicLights[5] = radiance$color[1];
                 radiance$dynamicLights[6] = radiance$color[2];
-                // Reach in blocks (a single pack-agnostic value BOTH shader packs read, so this reduces
-                // range for torches AND lanterns alike). ×0.15 = 10% of the previous ×1.5 (user) -- a
-                // tight close glow (torch ~2, lantern ~2.25 blocks). The native falloff (1-(d/R)^4) stays
-                // ~full then eases to 0 at this cap.
-                radiance$dynamicLights[7] = radiance$level * 0.15F;
+                radiance$dynamicLights[7] = radiance$level;
                 radiance$dynamicLightCount = 1;
             }
         }
