@@ -38,16 +38,21 @@ how each feature worked in 1.21.x.
 
 ## Stability (slot in whenever it annoys)
 
-- 🔧 **Clean exit** — fix applied, awaiting confirm (2026-08-16). Root cause: native Vulkan teardown
-  (`RendererProxy.close()`) was injected at `Minecraft.close()V` **TAIL**, but MC destroys its GLFW
-  window (`window.close()` → `glfwDestroyWindow`) and calls `glfwTerminate()` earlier in `close()`
-  (verified via javap: TextureManager.close@84 → RenderSystem.shutdownRenderer@128 → window.close@135 →
-  glfwTerminate@145). `vk::Window::~Window()` does `vkDestroySurfaceKHR` on the surface built from that
-  HWND (+ swapchain bound to it) → destroying them after the HWND/GLFW are gone crashed the WSI every
-  exit. Fix (`MinecraftClientMixins`, Java-only, 8db0e03): inject the teardown **before** the
-  `Window.close()` INVOKE — MC's textures are already freed (device still alive) and the window/HWND is
-  still valid. `Renderer::close()` is idempotent so covering both (normal+catch) window.close() sites is
-  safe. Native member-destruction order (`render_framework.hpp`) was already correct (device/instance last).
+- 🔧 **Clean exit** — TWO-part fix applied, awaiting confirm (2026-08-16). **Part 1 (native surface
+  segfault):** native teardown (`RendererProxy.close()`) was injected at `Minecraft.close()V` **TAIL**,
+  but MC destroys its GLFW window (`window.close()` → `glfwDestroyWindow`) and calls `glfwTerminate()`
+  earlier in `close()` (javap: TextureManager.close@84 → RenderSystem.shutdownRenderer@128 →
+  window.close@135 → glfwTerminate@145). `vk::Window::~Window()` does `vkDestroySurfaceKHR` on the
+  surface built from that HWND (+ swapchain bound to it) → destroying them after the HWND/GLFW are gone
+  crashed the WSI. Fix (`MinecraftClientMixins`, 8db0e03): inject teardown **before** the `Window.close()`
+  INVOKE (textures already freed → device alive; window/HWND still valid). `Renderer::close()` is
+  idempotent so covering both window.close() sites is safe. Native member-destruction order was already
+  correct. **Part 2 (shutdown-watchdog hang, surfaced once Part 1 stopped the segfault):** `ChunkProxy`'s
+  chunk-rebuild `ExecutorService` factories made **non-daemon** threads (`new Thread(r)`), so idle
+  workers kept the JVM alive → `DestroyJavaVM` blocked → MC 26.2 `ClientShutdownWatchdog` force-crashed
+  ("Client shutdown from post-main"; dump showed a non-daemon `Thread-N` in `ThreadPoolExecutor.getTask`).
+  Fix (`ChunkProxy`, 54c86b6): `setDaemon(true)` on all three factories. (No `awaitTermination` on the
+  close path — that would just re-trip the watchdog.) Both fixes are Java-only.
 
 ## Done this port (recent)
 
