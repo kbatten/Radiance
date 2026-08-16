@@ -96,10 +96,10 @@ public abstract class WorldRendererMixins {
     // Radiance scale for a handheld light at full block level (15): intensity = (level/15)^2 * gain,
     // times the native falloff (1 - (d/R)^4). For reference VPT_SUN_RADIANCE = 8. gain 60 (tuned blind
     // while the wrong shader pack was active) was WAY too bright once it actually applied under both
-    // packs, so cut to 10 (a torch reads ~sun-ish, spread over its range). Compile-time constant
-    // (inlined -> no mixin <clinit>, safe per the static-final gotcha). Tune to taste.
+    // packs; 60 -> 10 -> 5 (user). Compile-time constant (inlined -> no mixin <clinit>, safe per the
+    // static-final gotcha). Tune to taste.
     @Unique
-    private static final float RADIANCE_HANDHELD_LIGHT_GAIN = 10.0F;
+    private static final float RADIANCE_HANDHELD_LIGHT_GAIN = 5.0F;
 
     @Shadow
     @Final
@@ -267,10 +267,10 @@ public abstract class WorldRendererMixins {
                 radiance$dynamicLights[4] = radiance$color[0];
                 radiance$dynamicLights[5] = radiance$color[1];
                 radiance$dynamicLights[6] = radiance$color[2];
-                // Reach in blocks. Vanilla light spreads ~level blocks; extend it 2.5x so a carried
-                // torch lights a generous room (the native falloff stays ~full through the room then
-                // eases to 0 at this cap).
-                radiance$dynamicLights[7] = radiance$level * 2.5F;
+                // Reach in blocks (a single pack-agnostic value BOTH shader packs read). Vanilla light
+                // spreads ~level blocks; ×1.5 for a slightly generous room (was ×2.5 -- too far). The
+                // native falloff (1-(d/R)^4) stays ~full through the room then eases to 0 at this cap.
+                radiance$dynamicLights[7] = radiance$level * 1.5F;
                 radiance$dynamicLightCount = 1;
             }
         }

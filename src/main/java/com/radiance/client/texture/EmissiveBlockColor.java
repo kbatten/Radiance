@@ -4,7 +4,9 @@ import com.mojang.blaze3d.platform.NativeImage;
 import com.radiance.mixin_related.extensions.vulkan_render_integration.ISpriteContentsExt;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.resources.model.sprite.Material;
 import net.minecraft.world.level.block.Block;
 
 /**
@@ -27,9 +29,11 @@ public final class EmissiveBlockColor {
     private static final int ALPHA_THRESHOLD = 16;
 
     private static final Map<TextureAtlasSprite, float[]> CACHE = new ConcurrentHashMap<>();
-    // Per-block color, populated as emissive blocks are rendered (BlockModelRendererMixins). Lets the
-    // HANDHELD light (#23) look up the same color a PLACED torch emits, so the two match by construction.
+    // Per-block color, computed from the block's model particle sprite (no render dependency), so the
+    // HANDHELD light (#23) gets the SAME hue a placed torch/lantern emits -- they match by construction.
     private static final Map<Block, float[]> BLOCK_CACHE = new ConcurrentHashMap<>();
+    // Warm torch tint used only when a block's model/sprite can't be resolved yet (e.g. before models load).
+    private static final float[] WARM_FALLBACK = {1.0F, 0.75F, 0.45F};
 
     private EmissiveBlockColor() {
     }
@@ -42,25 +46,38 @@ public final class EmissiveBlockColor {
         return CACHE.computeIfAbsent(sprite, EmissiveBlockColor::compute);
     }
 
-    /** Record a block's emissive color (from its rendered sprite) so the handheld light can match it. */
-    public static void recordBlock(Block block, float[] color) {
-        if (block != null && color != null) {
-            BLOCK_CACHE.put(block, color);
-        }
-    }
-
-    /** The cached emissive color for a block if one has been rendered, else null. */
-    public static float[] ofBlock(Block block) {
-        return block == null ? null : BLOCK_CACHE.get(block);
-    }
-
-    // Warm torch tint used by the handheld light until the block has been rendered (and thus cached).
-    private static final float[] WARM_FALLBACK = {1.0F, 0.75F, 0.45F};
-
-    /** Cached emissive color for the block, or a warm torch tint if none has been rendered yet. */
+    /**
+     * The block's emissive light color, from its model's particle sprite (the representative texture --
+     * for a torch/lantern the flame texture, same one #20's chunk area lights sample). Cached per block;
+     * returns a warm torch tint if the model isn't available yet (retried next call, not cached).
+     */
     public static float[] ofBlockOrWarm(Block block) {
-        float[] cached = ofBlock(block);
-        return cached != null ? cached : WARM_FALLBACK;
+        if (block == null) {
+            return WARM_FALLBACK;
+        }
+        float[] cached = BLOCK_CACHE.get(block);
+        if (cached != null) {
+            return cached;
+        }
+        float[] computed = computeBlock(block);
+        if (computed == null) {
+            return WARM_FALLBACK;
+        }
+        BLOCK_CACHE.put(block, computed);
+        return computed;
+    }
+
+    private static float[] computeBlock(Block block) {
+        try {
+            Material.Baked material = Minecraft.getInstance().getModelManager()
+                .getBlockStateModelSet().getParticleMaterial(block.defaultBlockState());
+            if (material == null || material.sprite() == null) {
+                return null;
+            }
+            return of(material.sprite());
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private static float[] compute(TextureAtlasSprite sprite) {
