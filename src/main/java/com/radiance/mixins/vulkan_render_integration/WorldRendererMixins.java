@@ -267,10 +267,11 @@ public abstract class WorldRendererMixins {
                 radiance$dynamicLights[4] = radiance$color[0];
                 radiance$dynamicLights[5] = radiance$color[1];
                 radiance$dynamicLights[6] = radiance$color[2];
-                // Reach in blocks (a single pack-agnostic value BOTH shader packs read). Vanilla light
-                // spreads ~level blocks; ×1.5 for a slightly generous room (was ×2.5 -- too far). The
-                // native falloff (1-(d/R)^4) stays ~full through the room then eases to 0 at this cap.
-                radiance$dynamicLights[7] = radiance$level * 1.5F;
+                // Reach in blocks (a single pack-agnostic value BOTH shader packs read, so this reduces
+                // range for torches AND lanterns alike). ×0.15 = 10% of the previous ×1.5 (user) -- a
+                // tight close glow (torch ~2, lantern ~2.25 blocks). The native falloff (1-(d/R)^4) stays
+                // ~full then eases to 0 at this cap.
+                radiance$dynamicLights[7] = radiance$level * 0.15F;
                 radiance$dynamicLightCount = 1;
             }
         }
